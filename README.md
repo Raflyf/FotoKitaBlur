@@ -29,7 +29,7 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python app.py
+python blur.py
 ```
 
 Press `ESC` to close the application.
