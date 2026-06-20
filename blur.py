@@ -1,10 +1,7 @@
 import cv2
 import mediapipe as mp
 
-# =====================================
-# HAND DETECTION
-# =====================================
-
+#detect tangan
 mp_hands = mp.solutions.hands
 
 hands = mp_hands.Hands(
@@ -13,10 +10,6 @@ hands = mp_hands.Hands(
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
 )
-
-# =====================================
-# PEACE DETECTION
-# =====================================
 
 def finger_up(tip, pip, landmarks):
     return landmarks[tip].y < landmarks[pip].y
@@ -37,10 +30,7 @@ def is_peace(landmarks):
         and not pinky_up
     )
 
-# =====================================
-# CAMERA
-# =====================================
-
+#open camera
 cap = cv2.VideoCapture(0)
 
 while True:
@@ -69,9 +59,7 @@ while True:
                 peace_detected = True
                 break
 
-    # =====================================
-    # FULL SCREEN BLUR
-    # =====================================
+    #blur efek
 
     if peace_detected:
 
