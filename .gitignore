@@ -7,3 +7,4 @@ venv/
 *.pkl
 *.h5
 *.pt
+ngrok.exe
