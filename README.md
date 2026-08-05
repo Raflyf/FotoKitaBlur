@@ -38,9 +38,7 @@ python blur.py
 `python blur.py --help` untuk opsi flag (kamera, confidence, kernel blur, dll).
 Tekan `ESC` untuk keluar.
 
-> Musik: file audio berlisensi hak cipta, jadi tidak disertakan di repo.
-> Letakkan `foto-kita-blur.mp3` dan `kicau-mania.mp3` di `media/music/`
-> untuk mengaktifkan musik.
+Musik sudah disertakan di `media/music/` (`foto-kita-blur.mp3`, `kicau-mania.mp3`).
 
 ## Struktur
 
