@@ -74,15 +74,23 @@ before this audit: commit `8d21dd3`.
     `isFingerHeart()` fold threshold raised 1.05 -> 1.12 (below the 1.15x
     peace extension) to close the false-trigger zone during peace transitions,
     mirrored in `blur.py`.
+- FIX-24: added "Kamus Gestur" — a Bahasa Indonesia hand-gesture glossary
+  panel (5 cards: Peace, Love Satu/Dua Tangan, Jari Tengah, Scubacat) with an
+  on/off toggle button. CSP-strict (no inline handlers); open state persists
+  via localStorage, closes with the X button or Escape, respects
+  `prefers-reduced-motion`, and the panel is aria-labeled/expandable.
 
 ### templates/index.html
 - Removed all inline event handlers and inline layout styles.
 - Added meta description, theme-color, and an SVG data-URI favicon.
 - Buttons/switch rows use new classes (`.btn-flex`, `.btn-music`, `.switch-row`).
+- FIX-24: added "Kamus Gestur" toggle button and glossary panel markup.
 
 ### static/style.css
 - Added `.btn-flex`, `.btn-music`, `.switch-row`; removed dead
   `.placeholder-icon`.
+- FIX-24: added glossary styles (`.btn-glossary.active`, `.glossary-panel`,
+  cards, grid, entry animation) with `prefers-reduced-motion` guard.
 
 ### Media / git
 - MP3s moved to `media/music/` (renamed to machine-safe slugs), staged

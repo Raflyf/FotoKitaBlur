@@ -105,6 +105,9 @@ const blurLabel = document.getElementById('label-blur');
 const skeletonCheckbox = document.getElementById('check-skeleton');
 const crownCheckbox = document.getElementById('check-crown');
 const cheekyCheckbox = document.getElementById('check-cheeky');
+const btnGlossary = document.getElementById('btn-glossary');
+const glossaryPanel = document.getElementById('glossary-panel');
+const btnGlossaryClose = document.getElementById('btn-glossary-close');
 const confInput = document.getElementById('input-conf');
 const confLabel = document.getElementById('label-conf');
 const catVideoEl = document.getElementById('cat-video');
@@ -1400,6 +1403,37 @@ if (crownCheckbox && cheekyCheckbox) {
         }
     });
 }
+
+// Hand Gesture Glossary (Kamus Gestur) toggle. CSP-strict, no inline handlers.
+// FIX-24: persistent dictionary of recognized hand gestures in Bahasa Indonesia
+// with an on/off toggle; open state survives page reloads via localStorage.
+function setGlossaryOpen(open) {
+    if (!glossaryPanel || !btnGlossary) return;
+    glossaryPanel.hidden = !open;
+    btnGlossary.setAttribute('aria-expanded', String(open));
+    btnGlossary.classList.toggle('active', open);
+    try {
+        localStorage.setItem('foto-kita-blur-glossary-open', open ? '1' : '0');
+    } catch (e) { /* storage unavailable — non-fatal */ }
+}
+
+if (btnGlossary) {
+    btnGlossary.addEventListener('click', () => setGlossaryOpen(glossaryPanel.hidden));
+}
+if (btnGlossaryClose) {
+    btnGlossaryClose.addEventListener('click', () => setGlossaryOpen(false));
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && glossaryPanel && !glossaryPanel.hidden) {
+        setGlossaryOpen(false);
+    }
+});
+// Restore last open state (defensive try/catch for restricted storage contexts)
+try {
+    if (localStorage.getItem('foto-kita-blur-glossary-open') === '1') {
+        setGlossaryOpen(true);
+    }
+} catch (e) { /* ignore */ }
 
 // Event binding (replaces inline onclick/oninput/onchange handlers so the app
 // can ship a strict CSP without 'unsafe-inline' for scripts).

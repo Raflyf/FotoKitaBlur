@@ -11,6 +11,8 @@ for standalone use.
 - Gesture **parity** between frontend (JavaScript) and backend (Python) logic
 - Extra fun gestures: middle finger crown, finger heart, particle effects
 - Hand skeleton overlay, face tracking boxes, diagnostics HUD
+- "Kamus Gestur" — Bahasa Indonesia hand-gesture glossary panel with an
+  on/off toggle (state persists between visits)
 - Music playback synced from a local audio file (0:23 - 0:52)
 - Responsive dark UI, mobile-optimized detection loop
 - Strict Content-Security-Policy, no inline JS handlers

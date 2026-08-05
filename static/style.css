@@ -375,6 +375,140 @@ input[type="range"]::-webkit-slider-thumb:hover {
     color: var(--text-secondary);
 }
 
+/* Active state for the glossary toggle button (Kamus Gestur) */
+.btn-glossary.active {
+    background: var(--accent);
+    color: #000000;
+    border-color: var(--accent);
+}
+
+/* Hand Gesture Glossary (Kamus Gestur) */
+.glossary-panel {
+    background: rgba(255, 255, 255, 0.01);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1rem;
+    animation: glossaryIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glossary-panel[hidden] {
+    display: none;
+}
+
+@keyframes glossaryIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.glossary-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.glossary-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+}
+
+.glossary-sub {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 0.2rem;
+}
+
+.glossary-close {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.glossary-close:hover {
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+}
+
+.glossary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 0.85rem;
+}
+
+.glossary-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+    display: flex;
+    gap: 0.9rem;
+    align-items: flex-start;
+    transition: border-color 0.25s ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glossary-card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-1px);
+}
+
+.glossary-emoji {
+    width: 52px;
+    height: 52px;
+    flex-shrink: 0;
+    background: var(--accent-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.7rem;
+}
+
+.glossary-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 0;
+}
+
+.glossary-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.glossary-desc {
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+.glossary-effect {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #a1a1aa;
+    font-family: var(--font-mono);
+    letter-spacing: 0.2px;
+}
+
 /* Mobile Widescreen adjustments */
 @media (max-width: 600px) {
     body {
@@ -396,6 +530,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
     }
     .finger-panel {
         padding: 1rem;
+    }
+    .glossary-panel {
+        padding: 1rem;
+    }
+    .glossary-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .glossary-panel {
+        animation: none;
     }
 }
 
