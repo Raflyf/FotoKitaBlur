@@ -24,12 +24,13 @@ def set_security_headers(resp):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
-    # Strict-but-workable CSP: scripts/fonts/wasm come from jsdelivr and Google
-    # Fonts; all application resources (models, audio) are same-origin.
+    # Strict-but-workable CSP: MediaPipe Tasks Web is a WASM binary and needs
+    # 'wasm-unsafe-eval' to compile/instantiate; scripts/fonts come from
+    # jsdelivr and Google Fonts; all other resources are same-origin.
     resp.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net; "
+        "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; "
         "img-src 'self' data:; "

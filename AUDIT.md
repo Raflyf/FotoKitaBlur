@@ -31,6 +31,9 @@ before this audit: commit `8d21dd3`.
 - Audio served from `media/music/` via a fixed-key whitelist
   (`AUDIO_FILES`), `send_from_directory(..., conditional=True)`.
 - JSON error handlers for 404/500 with request logging.
+- CSP correction (found during browser runtime test): MediaPipe Tasks Web is
+  a WASM binary, so `script-src` must allow `'wasm-unsafe-eval'`; without it
+  the model fails to instantiate and the UI stays disabled forever.
 
 ### blur.py (rewritten)
 - `LANDMARKS` id map; CLAHE allocated once in `__init__`.
@@ -81,6 +84,8 @@ before this audit: commit `8d21dd3`.
 - `python -m unittest tests.test_blur -v` - 11/11 ok
 - Flask smoke test - `/` 200 + CSP header; `/music` and `/kicau` stream the
   audio with correct media type; path traversal `/etc/passwd` -> 404.
+- Browser runtime (Chrome DevTools MCP): models instantiate and both MediaPipe
+  graphs start; camera stream 1920x1080 (readyState 4); no console errors.
 
 ## Remaining debt / notes
 

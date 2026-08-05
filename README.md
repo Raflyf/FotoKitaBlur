@@ -104,6 +104,7 @@ media/music/           Local audio (gitignored)
 ## Privacy & Security
 
 - Frames are processed locally; no video is uploaded anywhere
-- CSP: `default-src 'self'`, scripts only from self + jsdelivr, `nosniff`,
+- CSP: `default-src 'self'`, scripts only from self + jsdelivr (with
+  `'wasm-unsafe-eval'` required by the MediaPipe WASM runtime), `nosniff`,
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`
 - Audio routes use fixed whitelist keys; arbitrary paths return 404
