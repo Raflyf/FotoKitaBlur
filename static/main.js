@@ -1348,6 +1348,19 @@ kicauAudio.addEventListener('timeupdate', () => {
     }
 });
 
+// FIX-26: unlock kicau autoplay on the first real user gesture. The scubacat
+// audio is played from inside the detection loop (not a direct user gesture),
+// so Chrome's autoplay policy blocks it unless the element was already
+// "opened" by a gesture. Play-then-pause once on the first interaction.
+function unlockKicauAudio() {
+    if (!kicauAudio) return;
+    const p = kicauAudio.play();
+    if (p && p.then) p.then(() => kicauAudio.pause()).catch(() => {});
+}
+window.addEventListener('pointerdown', unlockKicauAudio, { once: true });
+window.addEventListener('touchstart', unlockKicauAudio, { once: true });
+window.addEventListener('keydown', unlockKicauAudio, { once: true });
+
 // Native HTML5 Audio Player integration
 const audio = document.getElementById('audio-player');
 let isMusicPlaying = false;

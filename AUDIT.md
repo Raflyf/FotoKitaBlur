@@ -89,6 +89,12 @@ before this audit: commit `8d21dd3`.
   palm-normalized), not just 2+ reversals; `WAVING_RANGE_MIN` lowered 0.2 ->
   0.15 and charge/trigger rebalanced (18/25 -> 25/20) so one confirmed frame
   fires the gesture.
+- FIX-26: scubacat triggered but the birdsong (kicau) never played. The audio
+  file and `/kicau` route were fine; the cause was Chrome's autoplay policy —
+  `kicauAudio.play()` is called from inside the detection loop, not a direct
+  user gesture, so playback was silently blocked. Fixed by unlocking the
+  element on the first real interaction (pointerdown/touchstart/keydown:
+  play-then-pause once).
 
 ### templates/index.html
 - Removed all inline event handlers and inline layout styles.
