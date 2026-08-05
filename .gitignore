@@ -8,7 +8,6 @@ venv/
 *.h5
 *.pt
 ngrok.exe
-*.mp3
 *.wav
 *.ogg
 test-output/
