@@ -79,6 +79,16 @@ before this audit: commit `8d21dd3`.
   on/off toggle button. CSP-strict (no inline handlers); open state persists
   via localStorage, closes with the X button or Escape, respects
   `prefers-reduced-motion`, and the panel is aria-labeled/expandable.
+- FIX-25: scubacat was nearly impossible to trigger. The nose-hand gate only
+  checked fingertips (thumb/index), but the pose is a FIST covering the nose —
+  now the palm center (landmark 9) counts too and the gate widened
+  (0.12/0.6 -> 0.14/0.7 palm). The waving-hand proximity gate widened
+  (1.2x/1.5x -> 1.6x/2.0x face bbox) so a horizontal wrist swipe swinging past
+  the face still belongs to that person. Waving detection now accepts a single
+  fast one-way swipe via a total-travel metric (`WAVING_TRAVEL_MIN` 0.30
+  palm-normalized), not just 2+ reversals; `WAVING_RANGE_MIN` lowered 0.2 ->
+  0.15 and charge/trigger rebalanced (18/25 -> 25/20) so one confirmed frame
+  fires the gesture.
 
 ### templates/index.html
 - Removed all inline event handlers and inline layout styles.

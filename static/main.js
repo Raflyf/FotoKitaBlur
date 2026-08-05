@@ -53,12 +53,14 @@ const HAND_MATCH_GATE = 0.3; // normalized max distance to re-identify a hand be
 // hand momentarily slows, so the gesture never triggered.
 let wavingHistories = new Map(); // handId -> { xs: [wristX,...], ys: [wristY,...] }
 const WAVING_WINDOW = 12;        // frames of wrist history to keep (~0.8s at 15fps)
-const WAVING_RANGE_MIN = 0.2;    // min normalized (by palmSize) side-to-side range over the window
+const WAVING_RANGE_MIN = 0.15;   // min normalized (by palmSize) side-to-side range over the window
 const WAVING_STEP_MIN = 0.02;    // min normalized step to confirm a direction change (rejects jitter)
 const WAVING_REVERSALS_MIN = 2;  // min robust direction reversals (1 full back-and-forth cycle)
-const WAVING_CHARGE = 18;        // charge per frame of confirmed waving
-const WAVING_DECAY = 6;          // decay per frame of no waving
-const WAVING_TRIGGER = 25;       // trigger threshold
+const WAVING_TRAVEL_MIN = 0.30;  // FIX-25: min total path length (by palmSize) — catches a single
+                                 // fast one-way swipe that never reverses direction
+const WAVING_CHARGE = 25;        // charge per frame of confirmed waving
+const WAVING_DECAY = 5;          // decay per frame of no waving
+const WAVING_TRIGGER = 20;       // trigger threshold (a single confirmed frame now triggers)
 
 // FIX-04: face tracking gates
 const FACE_MATCH_GATE = 0.4;     // normalized centroid distance to re-identify a face track
@@ -1024,14 +1026,17 @@ async function runDetection() {
                     if (noseX === null || noseY === null) continue;
 
                     // 1. Find the hand touching this face's nose (search ALL hands)
+                    // FIX-25: the nose-hand is usually a CLOSED FIST covering the nose, so check
+                    // the palm center (landmark 9) as well as the fingertips; widen the gate.
                     let noseHandIndex = -1;
                     for (let i = 0; i < results.landmarks.length; i++) {
                         const landmarks = results.landmarks[i];
                         const palmSize = getDistance(landmarks[0], landmarks[9]);
-                        const gate = Math.max(0.12, palmSize * 0.6); // scale the touch gate by hand size
+                        const gate = Math.max(0.14, palmSize * 0.7); // scale the touch gate by hand size
                         const indexDist = Math.hypot(landmarks[8].x - noseX, landmarks[8].y - noseY);
                         const thumbDist = Math.hypot(landmarks[4].x - noseX, landmarks[4].y - noseY);
-                        if (indexDist < gate || thumbDist < gate) {
+                        const palmDist = Math.hypot(landmarks[9].x - noseX, landmarks[9].y - noseY);
+                        if (indexDist < gate || thumbDist < gate || palmDist < gate) {
                             noseHandIndex = i;
                             break;
                         }
@@ -1048,8 +1053,10 @@ async function runDetection() {
                         if (palmSize < 0.01) continue;
 
                         // FIX-07: gate the waving hand to the same face via proximity
-                        const inFaceX = Math.abs(wrist.x - faceCenterX) < faceW * 1.2;
-                        const inFaceY = Math.abs(wrist.y - faceCenterY) < faceH * 1.5;
+                        // FIX-25: widen the gate — a horizontal wrist swipe swings further than
+                        // the face bbox while staying on the same person.
+                        const inFaceX = Math.abs(wrist.x - faceCenterX) < faceW * 1.6;
+                        const inFaceY = Math.abs(wrist.y - faceCenterY) < faceH * 2.0;
                         if (!inFaceX || !inFaceY) continue;
 
                         // FIX-08: maintain a per-hand wrist history and require oscillation.
@@ -1093,7 +1100,10 @@ async function runDetection() {
                         // sign flip of dx (which jitter triggers), only register a reversal when
                         // the hand has moved at least WAVING_STEP_MIN in the new direction since
                         // the last confirmed direction. This filters sub-threshold jitter.
+                        // FIX-25: also accumulate totalTravel (path length by palmSize) so a
+                        // single fast one-way swipe is recognized even with 0 reversals.
                         let reversals = 0;
+                        let totalTravel = 0;
                         let confirmedDir = 0;       // last confirmed direction (+1/-1)
                         let sinceChange = 0;        // accumulated travel since last confirmed dir
                         for (let k = 1; k < hist.xs.length; k++) {
@@ -1103,6 +1113,7 @@ async function runDetection() {
                             const step = (xRange >= yRange) ? dx : dy;
                             const dir = step > 0 ? 1 : (step < 0 ? -1 : 0);
                             if (dir === 0) continue;
+                            totalTravel += Math.abs(step) / palmSize;
                             if (confirmedDir === 0) {
                                 confirmedDir = dir;
                                 sinceChange = Math.abs(step) / palmSize;
@@ -1121,7 +1132,8 @@ async function runDetection() {
                         // FIX-08: a wave is confirmed when the hand has swept a wide range AND
                         // reversed direction at least WAVING_REVERSALS_MIN times (one full
                         // back-and-forth cycle = 2 reversals).
-                        if (range >= WAVING_RANGE_MIN && reversals >= WAVING_REVERSALS_MIN) {
+                        // FIX-25: ... OR swept a long total path with a single fast swipe.
+                        if (range >= WAVING_RANGE_MIN && (reversals >= WAVING_REVERSALS_MIN || totalTravel >= WAVING_TRAVEL_MIN)) {
                             currentFrameWaving = true;
                             break; // found a waving hand for this face
                         }
