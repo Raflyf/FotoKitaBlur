@@ -8,3 +8,8 @@ venv/
 *.h5
 *.pt
 ngrok.exe
+media/
+*.mp3
+*.wav
+*.ogg
+test-output/

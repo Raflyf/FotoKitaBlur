@@ -8,7 +8,6 @@ let localStream = null;
 let animationFrameId = null;
 
 // Face & Crown tracking state
-let faceDetected = false;
 let crownAngle = 0;
 let lastHeartState = false;
 let lastCheekyState = false;
@@ -98,6 +97,8 @@ const statusText = document.getElementById('status-text');
 const loadingPlaceholder = document.getElementById('loading-placeholder');
 const loadingText = document.getElementById('loading-text');
 
+const IS_MOBILE = /Mobi|Android/i.test(navigator.userAgent);
+
 // FIX-17: cache control DOM references once instead of querying every frame
 const blurInput = document.getElementById('input-blur');
 const blurLabel = document.getElementById('label-blur');
@@ -108,13 +109,18 @@ const confInput = document.getElementById('input-conf');
 const confLabel = document.getElementById('label-conf');
 const catVideoEl = document.getElementById('cat-video');
 const fingerPanel = document.getElementById('finger-panel');
+const btnMusic = document.getElementById('btn-music');
+
+// Finger diagnostics elements are cached once at startup (they are mutated at
+// detection rate, so per-call querySelector was a measurable hot spot).
+const fingerStatusEls = {};
+(function cacheFingerUI() {
+    for (const id of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
+        fingerStatusEls[id] = document.querySelector(`#finger-${id} .finger-status`);
+    }
+})();
 
 let lastAppliedPeace = null; // FIX-17: avoid redundant canvas.style.filter writes
-
-// Expose control handlers to window object
-window.toggleCamera = toggleCamera;
-window.updateConfidenceLabel = updateConfidenceLabel;
-window.applyConfidenceSetting = applyConfidenceSetting;
 
 // Initialize MediaPipe models
 async function initializeModel() {
@@ -442,6 +448,7 @@ function stopCamera() {
 
     // FIX-21: reset face detection counter so mobile throttling restarts cleanly
     faceDetectCounter = 0;
+    lastFaceResults = null;
     // FIX-05 / FIX-08: reset hand tracker and per-hand waving histories
     prevHands = [];
     wavingHistories.clear();
@@ -509,7 +516,6 @@ function applyConfidenceSetting() {
 
 // Main frame processing loop
 let lastVideoTime = -1;
-let lastPeaceState = false; // Persist state to prevent flickering
 let isDetecting = false;
 
 // FIX-04: update face tracks from a fresh set of face detections.
@@ -822,6 +828,7 @@ function renderLoop() {
 async function runDetection() {
     if (!isCameraActive) return;
     if (isDetecting) return; // Skip if previous run is still processing
+    if (!handLandmarker || !faceDetector) return; // Models not ready yet
 
     isDetecting = true;
     try {
@@ -835,9 +842,8 @@ async function runDetection() {
             
             // Mobile Optimization: run face detector only every 2nd frame (since faces move slower than hands)
             let faceResults = { detections: [] };
-            const isMobile = /Mobi|Android/i.test(navigator.userAgent);
             faceDetectCounter++;
-            if (!isMobile || faceDetectCounter % 2 === 0) {
+            if (!IS_MOBILE || faceDetectCounter % 2 === 0) {
                 faceResults = faceDetector.detectForVideo(video, startTimeMs);
                 lastFaceResults = faceResults;
             } else {
@@ -1130,10 +1136,8 @@ async function runDetection() {
             // FIX-04: update persistent face tracks (with stable IDs + EMA smoothing) from the
             // fresh detections. Tracks survive brief detection gaps (TRACK_KEEP_FRAMES).
             if (faceResults.detections && faceResults.detections.length > 0) {
-                faceDetected = true;
                 updateFaceTracks(faceResults.detections, scaleX, scaleY);
             } else {
-                faceDetected = false;
                 // FIX-04: still age existing tracks so they retire after the keep-alive window
                 for (const t of faceTracks) t.missedFrames++;
                 faceTracks = faceTracks.filter(t => t.missedFrames <= TRACK_KEEP_FRAMES);
@@ -1193,7 +1197,6 @@ async function runDetection() {
                 peaceHoldTimer--;
             }
             effectivePeace = peaceHoldTimer > 0;
-            lastPeaceState = peaceDetected;
 
             // FIX-06 & FIX-12: publish a new interpolation snapshot for this detection.
             // The render loop linearly interpolates between prevSnapshot and currSnapshot.
@@ -1219,8 +1222,7 @@ async function runDetection() {
     isDetecting = false;
     
     // Schedule next detection (100ms on mobile for lower CPU/heat, 66ms on desktop)
-    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-    const delay = isMobile ? 100 : 66;
+    const delay = IS_MOBILE ? 100 : 66;
     detectionTimeoutId = setTimeout(runDetection, delay);
 }
 
@@ -1258,17 +1260,16 @@ function startDetectionLoop() {
     runDetection();
 }
 
-// Helper to update diagnostics UI indicators
+// Helper to update diagnostics UI indicators (DOM refs are pre-cached)
 function updateFingerUI(id, extended) {
-    const el = document.querySelector(`#finger-${id} .finger-status`);
-    if (el) {
-        if (extended) {
-            el.textContent = "Extended";
-            el.className = "finger-status extended";
-        } else {
-            el.textContent = "Folded";
-            el.className = "finger-status folded";
-        }
+    const el = fingerStatusEls[id];
+    if (!el) return;
+    if (extended) {
+        el.textContent = "Extended";
+        el.className = "finger-status extended";
+    } else {
+        el.textContent = "Folded";
+        el.className = "finger-status folded";
     }
 }
 
@@ -1293,7 +1294,6 @@ function toggleMusic() {
         startMusic();
     }
 }
-window.toggleMusic = toggleMusic;
 
 // Monitor time update to stop at exactly 52 seconds (0:52)
 audio.addEventListener('timeupdate', () => {
@@ -1306,8 +1306,7 @@ function startMusic() {
     audio.currentTime = 23; // Seek to 23s (0:23)
     audio.play().then(() => {
         isMusicPlaying = true;
-        
-        const btnMusic = document.getElementById('btn-music');
+
         btnMusic.innerHTML = `
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
             Stop Music
@@ -1326,8 +1325,7 @@ function stopMusic() {
         audio.pause();
     }
     isMusicPlaying = false;
-    
-    const btnMusic = document.getElementById('btn-music');
+
     btnMusic.innerHTML = `
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
         Play Music (0:23 - 0:52)
@@ -1337,20 +1335,24 @@ function stopMusic() {
     btnMusic.style.borderColor = 'var(--border)';
 }
 
-// Mutual exclusivity logic for crown toggles
-const checkCrown = document.getElementById('check-crown');
-const checkCheeky = document.getElementById('check-cheeky');
-
-if (checkCrown && checkCheeky) {
-    checkCrown.addEventListener('change', () => {
-        if (checkCrown.checked) {
-            checkCheeky.checked = false;
+// Mutual exclusivity logic for crown toggles (reuses the cached checkbox refs)
+if (crownCheckbox && cheekyCheckbox) {
+    crownCheckbox.addEventListener('change', () => {
+        if (crownCheckbox.checked) {
+            cheekyCheckbox.checked = false;
         }
     });
 
-    checkCheeky.addEventListener('change', () => {
-        if (checkCheeky.checked) {
-            checkCrown.checked = false;
+    cheekyCheckbox.addEventListener('change', () => {
+        if (cheekyCheckbox.checked) {
+            crownCheckbox.checked = false;
         }
     });
 }
+
+// Event binding (replaces inline onclick/oninput/onchange handlers so the app
+// can ship a strict CSP without 'unsafe-inline' for scripts).
+btnToggle.addEventListener('click', toggleCamera);
+confInput.addEventListener('input', updateConfidenceLabel);
+confInput.addEventListener('change', applyConfidenceSetting);
+if (btnMusic) btnMusic.addEventListener('click', toggleMusic);

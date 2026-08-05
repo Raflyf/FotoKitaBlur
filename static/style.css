@@ -162,20 +162,6 @@ body {
     z-index: 10;
 }
 
-.placeholder-icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--border);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-size: 1.25rem;
-    color: var(--text-secondary);
-    margin-bottom: 0.5rem;
-}
-
 .spinner {
     border: 2px solid rgba(255, 255, 255, 0.1);
     width: 24px;
@@ -230,6 +216,20 @@ body {
     cursor: not-allowed;
 }
 
+.btn-flex {
+    flex: 1;
+    min-width: 200px;
+}
+
+.btn-music {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    font-size: 0.9rem;
+    border-radius: 12px;
+    padding: 0.75rem;
+}
+
 .btn-danger {
     background: var(--danger-bg);
     color: var(--danger);
@@ -256,6 +256,13 @@ body {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+}
+
+.switch-row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0;
 }
 
 .slider-info {

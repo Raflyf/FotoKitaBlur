@@ -1,33 +1,77 @@
 import os
-import sys
-import signal
-from flask import Flask, render_template, send_from_directory
+
+from flask import Flask, jsonify, render_template, send_from_directory
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MEDIA_DIR = os.path.join(BASE_DIR, "media", "music")
+
+HOST = os.environ.get("FOTO_BLUR_HOST", "127.0.0.1")
+PORT = int(os.environ.get("FOTO_BLUR_PORT", "5000"))
+DEBUG = os.environ.get("FOTO_BLUR_DEBUG", "0") == "1"
+
+# Filenames are resolved against MEDIA_DIR only; the routes below are fixed
+# identifiers so arbitrary paths can never reach the server-side filesystem.
+AUDIO_FILES = {
+    "music": "foto-kita-blur.mp3",
+    "kicau": "kicau-mania.mp3",
+}
 
 app = Flask(__name__)
 
-# Force clean exit on SIGINT (Ctrl+C) and SIGTERM to prevent Windows ghost processes
-def clean_exit(signum, frame):
-    sys.exit(0)
 
-signal.signal(signal.SIGINT, clean_exit)
-signal.signal(signal.SIGTERM, clean_exit)
+@app.after_request
+def set_security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    # Strict-but-workable CSP: scripts/fonts/wasm come from jsdelivr and Google
+    # Fonts; all application resources (models, audio) are same-origin.
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "media-src 'self'; "
+        "connect-src 'self' https://cdn.jsdelivr.net; "
+        "worker-src 'self' blob:",
+    )
+    return resp
 
-@app.route('/')
+
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/music')
+
+def _serve_audio(key):
+    filename = AUDIO_FILES.get(key)
+    if filename is None:
+        return jsonify({"error": "Unknown audio"}), 404
+    return send_from_directory(MEDIA_DIR, filename, conditional=True, max_age=86400)
+
+
+@app.route("/music")
 def serve_music():
-    # Serve the local mp3 file directly from the app folder
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    return send_from_directory(current_dir, 'Foto kita blur - Sal Priadi _ Lirik Lagu.mp3')
+    return _serve_audio("music")
 
-@app.route('/kicau')
+
+@app.route("/kicau")
 def serve_kicau():
-    # Serve the Kicau Mania mp3 file
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    return send_from_directory(current_dir, 'KICAU MANIA  NDARBOY GENK, BANDITOZ YAOW 86 (Lyrics).mp3')
+    return _serve_audio("kicau")
 
-if __name__ == '__main__':
-    # use_reloader=False prevents Flask from spawning a background watcher process on Windows
-    app.run(host='127.0.0.1', port=5000, debug=True, use_reloader=False)
+
+@app.errorhandler(404)
+def not_found(_err):
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.errorhandler(500)
+def server_error(err):
+    app.logger.exception("Unhandled error: %s", err)
+    return jsonify({"error": "Internal server error"}), 500
+
+
+if __name__ == "__main__":
+    app.run(host=HOST, port=PORT, debug=DEBUG, use_reloader=False)
