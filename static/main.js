@@ -19,7 +19,7 @@ let detectionTimeoutId = null;
 // FIX-04: per-face tracking with stable IDs and EMA smoothing
 let faceTracks = [];        // [{ id, headX, headY, headWidth, headHeight, isCheeky, missedFrames }]
 let nextFaceId = 0;
-const TRACK_KEEP_FRAMES = 5;   // keep a track alive for this many missed detections before retiring
+const TRACK_KEEP_FRAMES = 4;   // keep a track alive for this many missed detections before retiring
 const FACE_EMA_ALPHA = 0.4;    // new-observation weight: pos = pos + (new - pos) * ALPHA
 
 // FIX-06 & FIX-12: cache last two detection snapshots to interpolate between detections
@@ -27,7 +27,7 @@ let prevSnapshot = null;
 let currSnapshot = null;       // { time, crowns, spawns, cheekySpawns }
 
 // FIX-02: temporal hysteresis (latch) for the peace/blur gesture
-const PEACE_HOLD_DURATION = 10; // hold blur for N extra detection frames after last positive detection
+const PEACE_HOLD_DURATION = 4; // hold blur for N extra detection frames after last positive detection
 let peaceHoldTimer = 0;
 
 // FIX-16: framerate-independent crown rotation
@@ -38,7 +38,7 @@ const CROWN_ANGULAR_SPEED = 2.4; // radians per second (== 0.04/frame at 60fps)
 let showSkeleton = false;
 let lastHandLandmarks = [];
 let scubacatHoldTimer = 0;
-const SCUBACAT_HOLD_DURATION = 15;
+const SCUBACAT_HOLD_DURATION = 8;
 let wavingActivity = 0;
 
 // FIX-05: lightweight hand tracker (nearest-wrist match) for stable hand identity
@@ -255,11 +255,17 @@ let cheekySpawnCooldown = 0;
 let ambientSpawnCooldown = 0;
 
 // Hysteresis: once triggered, stay active for N extra detection frames to bridge brief drops
-const HEART_HOLD_DURATION = 8; // number of frames to hold after last positive detection
+const HEART_HOLD_DURATION = 3; // number of frames to hold after last positive detection
 // FIX-05: keyed by stable hand-tracking ID (not array index) so timers survive reordering
 const heartHoldTimers = new Map(); // key: hand track id, value: frames remaining
 
-const CHEEKY_HOLD_DURATION = 8;
+// FIX-23: latch for the two-hand classic heart. Hand pairs have no stable ID, so use one
+// shared timer + a snapshot of the last positive index-tip positions.
+const TWO_HAND_HEART_HOLD = 3;
+let twoHandHeartTimer = 0;
+let twoHandHeartPos = null; // [{x, y}, {x, y}] index tips at last positive detection
+
+const CHEEKY_HOLD_DURATION = 3;
 // FIX-05: keyed by stable hand-tracking ID (not array index)
 const cheekyHoldTimers = new Map(); // key: hand track id, value: frames remaining
 
@@ -345,8 +351,9 @@ function isMiddleFinger(landmarks) {
  * Detects the Korean finger heart gesture 🫰.
  * To be 100% accurate:
  * 1. The index finger must be extended (tip further from wrist than PIP). This rules out fists.
- * 2. The middle and ring fingers must be folded (tip no further than PIP; 1.05x is lenient
- *    enough for partial curls, still rules out peace signs which need > 1.15x).
+ * 2. The middle and ring fingers must be folded (tip no further than PIP; 1.12x is lenient
+ *    enough for partial curls yet still below the 1.15x+ extension required by peace/“V”
+ *    signs, so a forming peace sign cannot false-trigger the heart).
  * 3. The thumb tip and index tip must be close/crossing (distance < 0.85 * palmSize).
  */
 function isFingerHeart(landmarks) {
@@ -357,9 +364,9 @@ function isFingerHeart(landmarks) {
     // Index must be fully extended and straight (at least 1.15x PIP distance from wrist)
     const indexUp = getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist) * 1.15;
     
-    // Middle and ring must be clearly folded (lenient 1.05x, see comment above)
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.05;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.05;
+    // Middle and ring must be clearly folded (lenient 1.12x, see comment above)
+    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.12;
+    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.12;
 
     if (!indexUp) return false;
     if (!middleFolded || !ringFolded) return false;
@@ -463,6 +470,9 @@ function stopCamera() {
     // FIX-05: clear gesture hysteresis timers
     heartHoldTimers.clear();
     cheekyHoldTimers.clear();
+    // FIX-23: reset two-hand heart latch state
+    twoHandHeartTimer = 0;
+    twoHandHeartPos = null;
     // FIX-17: reset redundant-write guard
     lastAppliedPeace = null;
 
@@ -891,10 +901,16 @@ async function runDetection() {
                 // FIX-05: keyed by stable hand track id instead of array index
                 // FIX-22: collect ids of hands firing a real heart THIS frame so the
                 // two-hand classic-heart detector below can avoid double-firing.
+                // FIX-23: a peace/V sign must never emit a heart — kill the latch immediately
+                // so the emoji disappears the instant the user switches to peace.
                 const heartHandIds = new Set();
                 for (const th of trackedHands) {
                     const landmarks = th.landmarks;
                     const handId = th.id;
+                    if (isPeace(landmarks)) {
+                        heartHoldTimers.set(handId, 0);
+                        continue; // peace wins over heart for this hand
+                    }
                     if (isFingerHeart(landmarks)) {
                         heartHandIds.add(handId);
                         heartHoldTimers.set(handId, HEART_HOLD_DURATION); // Reset latch on positive detection
@@ -933,7 +949,11 @@ async function runDetection() {
                 // FIX-22: emit ONE heart per hand (at each index tip) so a two-hand heart
                 // produces two emojis; skip pairs where both hands already fired a
                 // one-hand finger heart this frame to avoid quadruple-firing.
+                // FIX-23: pairs have no stable ID, so keep a shared latch timer; the pair
+                // snapshot keeps emitting during brief detection dips. Threshold widened to
+                // 0.6 * avgPalm so a slightly-loose heart still registers.
                 if (results.landmarks.length >= 2) {
+                    pairLoop:
                     for (let i = 0; i < results.landmarks.length; i++) {
                         for (let j = i + 1; j < results.landmarks.length; j++) {
                             const l1 = results.landmarks[i];
@@ -949,13 +969,21 @@ async function runDetection() {
                             if (avgPalm < 0.01) continue;
                             const distIndex = getDistance(l1[8], l2[8]);
                             const distThumb = getDistance(l1[4], l2[4]);
-                            // FIX-13: 0.5 * avgPalm replaces the old raw 0.12 threshold
-                            if (distIndex < 0.5 * avgPalm && distThumb < 0.5 * avgPalm) {
-                                heartGestures.push({ x: l1[8].x, y: l1[8].y, handId: -1 });
-                                heartGestures.push({ x: l2[8].x, y: l2[8].y, handId: -2 });
+                            // FIX-13: 0.6 * avgPalm replaces the old raw 0.12 threshold
+                            if (distIndex < 0.6 * avgPalm && distThumb < 0.6 * avgPalm) {
+                                twoHandHeartPos = [{ x: l1[8].x, y: l1[8].y }, { x: l2[8].x, y: l2[8].y }];
+                                twoHandHeartTimer = TWO_HAND_HEART_HOLD;
+                                break pairLoop; // emit from the closest-matching pair only
                             }
                         }
                     }
+                }
+                // FIX-23: emit during the latch window, but never while one-hand finger hearts
+                // are firing this frame (those already produced their own emojis).
+                if (twoHandHeartTimer > 0 && heartHandIds.size === 0 && twoHandHeartPos) {
+                    heartGestures.push({ x: twoHandHeartPos[0].x, y: twoHandHeartPos[0].y, handId: -1 });
+                    heartGestures.push({ x: twoHandHeartPos[1].x, y: twoHandHeartPos[1].y, handId: -2 });
+                    twoHandHeartTimer--;
                 }
             } else {
                 updateFingerUI('thumb', false);
@@ -1161,22 +1189,27 @@ async function runDetection() {
             // FIX-22: heart gestures are consumed globally (each heart feeds one face), and each
             // face may take up to 2 hearts — one per hand — so a two-hand classic heart emits
             // two emojis instead of one.
+            // FIX-23: same 2-per-face rule for cheeky gestures, so two middle fingers raised
+            // by one person emit two emojis (one per hand).
             const newSpawns = [];
             const newCheekySpawns = [];
-            const heartConsumed = new Set();    // indices into heartGestures already used
-            const facesAssignedCheeky = new Set();  // face track ids that already got a cheeky gesture
+            const heartConsumed = new Set();      // indices into heartGestures already used
+            const cheekyConsumed = new Set();     // indices into cheekyGestures already used
 
             for (const track of faceTracks) {
                 let isFaceCheeky = false;
 
-                // FIX-11: nearest-face assignment for cheeky gestures
-                for (const g of cheekyGestures) {
-                    if (facesAssignedCheeky.has(track.id)) break; // one cheeky gesture per face
+                // FIX-11 + FIX-23: nearest-face assignment for cheeky gestures
+                let cheekyCountForFace = 0;
+                for (let gi = 0; gi < cheekyGestures.length && cheekyCountForFace < 2; gi++) {
+                    if (cheekyConsumed.has(gi)) continue;
+                    const g = cheekyGestures[gi];
                     const dist = Math.hypot(track.normX - g.x, track.normY - g.y);
                     if (dist < GESTURE_FACE_GATE) {
                         isFaceCheeky = true;
                         newCheekySpawns.push({ x: g.x, y: g.y });
-                        facesAssignedCheeky.add(track.id);
+                        cheekyConsumed.add(gi);
+                        cheekyCountForFace++;
                     }
                 }
 

@@ -61,6 +61,19 @@ before this audit: commit `8d21dd3`.
   mirrored in `blur.py` for parity. Two-hand classic heart now emits one emoji
   per hand (at each index tip, deduped against one-hand hearts) and the
   per-face cap is 2 hearts (left + right hand) with global gesture consumption.
+- FIX-23: responsive gesture release + multi-hand parity.
+  - Hold/latch durations shortened so effects vanish promptly: peace 10 -> 4,
+    scubacat 15 -> 8, heart/cheeky 8 -> 3, face tracks 5 -> 4.
+  - Two-hand classic heart gained its own 3-frame latch (hand pairs have no
+    stable ID) with a snapshot of index-tip positions, and its threshold was
+    widened 0.5 -> 0.6 * avgPalm.
+  - Cheeky (middle finger) now allows 2 emojis per face (one per hand), same
+    global-consumption scheme as hearts.
+  - A peace/V sign kills the heart latch immediately and wins over the heart,
+    so forming a peace sign can no longer false-trigger the love emoji;
+    `isFingerHeart()` fold threshold raised 1.05 -> 1.12 (below the 1.15x
+    peace extension) to close the false-trigger zone during peace transitions,
+    mirrored in `blur.py`.
 
 ### templates/index.html
 - Removed all inline event handlers and inline layout styles.
