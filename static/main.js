@@ -345,8 +345,9 @@ function isMiddleFinger(landmarks) {
  * Detects the Korean finger heart gesture 🫰.
  * To be 100% accurate:
  * 1. The index finger must be extended (tip further from wrist than PIP). This rules out fists.
- * 2. The middle and ring fingers must be folded (tip closer to wrist than PIP). This rules out open hands/peace signs.
- * 3. The thumb tip and index tip must be close/crossing (distance < 0.70 * palmSize).
+ * 2. The middle and ring fingers must be folded (tip no further than PIP; 1.05x is lenient
+ *    enough for partial curls, still rules out peace signs which need > 1.15x).
+ * 3. The thumb tip and index tip must be close/crossing (distance < 0.85 * palmSize).
  */
 function isFingerHeart(landmarks) {
     const wrist = landmarks[0];
@@ -356,16 +357,16 @@ function isFingerHeart(landmarks) {
     // Index must be fully extended and straight (at least 1.15x PIP distance from wrist)
     const indexUp = getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist) * 1.15;
     
-    // Middle and ring must be clearly folded
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 0.9;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 0.9;
+    // Middle and ring must be clearly folded (lenient 1.05x, see comment above)
+    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.05;
+    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.05;
 
     if (!indexUp) return false;
     if (!middleFolded || !ringFolded) return false;
 
     // The thumb tip (4) and index tip (8) must be close/crossing
     const distThumbIndex = getDistance(landmarks[4], landmarks[8]);
-    if (distThumbIndex > palmSize * 0.70) return false;
+    if (distThumbIndex > palmSize * 0.85) return false;
 
     return true;
 }
@@ -888,10 +889,14 @@ async function runDetection() {
 
                 // Check one-hand Korean finger heart for all hands — with hysteresis latch
                 // FIX-05: keyed by stable hand track id instead of array index
+                // FIX-22: collect ids of hands firing a real heart THIS frame so the
+                // two-hand classic-heart detector below can avoid double-firing.
+                const heartHandIds = new Set();
                 for (const th of trackedHands) {
                     const landmarks = th.landmarks;
                     const handId = th.id;
                     if (isFingerHeart(landmarks)) {
+                        heartHandIds.add(handId);
                         heartHoldTimers.set(handId, HEART_HOLD_DURATION); // Reset latch on positive detection
                     }
                     // Use latch: emit gesture if timer still active
@@ -925,11 +930,19 @@ async function runDetection() {
                 // FIX-13: normalize the index/thumb tip distances by the average palmSize of the
                 // two hands, consistent with the one-hand isFingerHeart approach (raw 0.12 was
                 // distance-dependent and failed for hands close to / far from the camera).
+                // FIX-22: emit ONE heart per hand (at each index tip) so a two-hand heart
+                // produces two emojis; skip pairs where both hands already fired a
+                // one-hand finger heart this frame to avoid quadruple-firing.
                 if (results.landmarks.length >= 2) {
                     for (let i = 0; i < results.landmarks.length; i++) {
                         for (let j = i + 1; j < results.landmarks.length; j++) {
                             const l1 = results.landmarks[i];
                             const l2 = results.landmarks[j];
+                            const id1 = trackedHands[i] ? trackedHands[i].id : null;
+                            const id2 = trackedHands[j] ? trackedHands[j].id : null;
+                            if (id1 !== null && id2 !== null && heartHandIds.has(id1) && heartHandIds.has(id2)) {
+                                continue; // both hands already emitted a one-hand heart
+                            }
                             const palm1 = getDistance(l1[0], l1[9]);
                             const palm2 = getDistance(l2[0], l2[9]);
                             const avgPalm = (palm1 + palm2) / 2;
@@ -938,9 +951,8 @@ async function runDetection() {
                             const distThumb = getDistance(l1[4], l2[4]);
                             // FIX-13: 0.5 * avgPalm replaces the old raw 0.12 threshold
                             if (distIndex < 0.5 * avgPalm && distThumb < 0.5 * avgPalm) {
-                                const gx = (l1[8].x + l2[8].x) / 2;
-                                const gy = (l1[8].y + l2[8].y) / 2;
-                                heartGestures.push({ x: gx, y: gy, handId: -1 });
+                                heartGestures.push({ x: l1[8].x, y: l1[8].y, handId: -1 });
+                                heartGestures.push({ x: l2[8].x, y: l2[8].y, handId: -2 });
                             }
                         }
                     }
@@ -1146,9 +1158,12 @@ async function runDetection() {
             // FIX-11: assign each gesture to its SINGLE nearest face (within a tight gate) instead
             // of spawning particles for every face within 0.6. One-gesture-per-face is enforced by
             // tracking which faces have already consumed a gesture this frame.
+            // FIX-22: heart gestures are consumed globally (each heart feeds one face), and each
+            // face may take up to 2 hearts — one per hand — so a two-hand classic heart emits
+            // two emojis instead of one.
             const newSpawns = [];
             const newCheekySpawns = [];
-            const facesAssignedHeart = new Set();   // face track ids that already got a heart gesture
+            const heartConsumed = new Set();    // indices into heartGestures already used
             const facesAssignedCheeky = new Set();  // face track ids that already got a cheeky gesture
 
             for (const track of faceTracks) {
@@ -1165,13 +1180,16 @@ async function runDetection() {
                     }
                 }
 
-                // FIX-11: nearest-face assignment for heart gestures
-                for (const g of heartGestures) {
-                    if (facesAssignedHeart.has(track.id)) break; // one heart gesture per face
+                // FIX-11 + FIX-22: nearest-face assignment for heart gestures
+                let heartCountForFace = 0;
+                for (let gi = 0; gi < heartGestures.length && heartCountForFace < 2; gi++) {
+                    if (heartConsumed.has(gi)) continue;
+                    const g = heartGestures[gi];
                     const dist = Math.hypot(track.normX - g.x, track.normY - g.y);
                     if (dist < GESTURE_FACE_GATE) {
                         newSpawns.push({ x: g.x, y: g.y });
-                        facesAssignedHeart.add(track.id);
+                        heartConsumed.add(gi);
+                        heartCountForFace++;
                     }
                 }
 

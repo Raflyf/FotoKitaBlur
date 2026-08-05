@@ -56,6 +56,11 @@ before this audit: commit `8d21dd3`.
   `isDetecting` reset; `lastFaceResults` reset on stop.
 - Removed `window.*` exposure; inline handlers moved to `addEventListener`
   (CSP-compatible).
+- FIX-22: `isFingerHeart()` thresholds relaxed (folded 0.9 -> 1.05, thumb-index
+  0.70 -> 0.85 palm) so the Korean heart triggers reliably with partial curls;
+  mirrored in `blur.py` for parity. Two-hand classic heart now emits one emoji
+  per hand (at each index tip, deduped against one-hand hearts) and the
+  per-face cap is 2 hearts (left + right hand) with global gesture consumption.
 
 ### templates/index.html
 - Removed all inline event handlers and inline layout styles.
