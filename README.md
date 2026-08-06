@@ -56,6 +56,7 @@ media/music/           Audio lokal (di-gitignore)
 
 ```bash
 python -m unittest tests.test_blur -v
+node --test tests/gestures.test.mjs
 ```
 
 ## Teknologi

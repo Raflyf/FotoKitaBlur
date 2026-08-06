@@ -1,4 +1,5 @@
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js";
 
 let handLandmarker;
 let faceDetector;
@@ -170,17 +171,6 @@ async function initializeModel() {
 // Run model initialization
 initializeModel();
 
-function getDistance(p1, p2) {
-    // FIX-18: 2D-only distance assumption. MediaPipe landmarks carry a z component (depth,
-    // relative to the wrist) but we intentionally ignore it here. All gesture/proximity checks
-    // operate on the 2D-projected normalized image plane, which is sufficient for the
-    // screen-space matching this app performs. z is not comparable across different hands/faces.
-    return Math.sqrt(
-        Math.pow(p1.x - p2.x, 2) +
-        Math.pow(p1.y - p2.y, 2)
-    );
-}
-
 // GPU Acceleration: Offscreen Canvas Cache for emojis (prevents slow CPU text rasterization drop-frames)
 // FIX-22: cache is bounded with an LRU eviction policy and coarser size quantization to limit memory.
 const EMOJI_CACHE_MAX = 64;        // maximum number of cached emoji canvases
@@ -314,74 +304,8 @@ function trackHands(landmarksList) {
 }
 
 
-function isPeace(landmarks) {
-    const wrist = landmarks[0];
-    const palmSize = getDistance(landmarks[0], landmarks[9]);
-    if (palmSize < 0.01) return false;
-
-    // 1. Strict extension: index and middle finger must be fully extended perpendicularly
-    const indexUp  = getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist) * 1.15;
-    const middleUp = getDistance(landmarks[12], wrist) > getDistance(landmarks[10], wrist) * 1.15;
-    
-    // 2. Strict fold: ring and pinky must be folded tightly
-    const ringFolded  = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 0.85;
-    const pinkyFolded = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 0.85;
-
-    // 3. V-Shape spread: index tip and middle tip must be spread apart in a "V"
-    const fingersSpread = getDistance(landmarks[8], landmarks[12]) > palmSize * 0.32;
-
-    // 4. Thumb folded: thumb tip must be close to palm
-    const thumbFolded = getDistance(landmarks[4], wrist) < palmSize * 1.1;
-
-    return indexUp && middleUp && ringFolded && pinkyFolded && fingersSpread && thumbFolded;
-}
-
-function isMiddleFinger(landmarks) {
-    const wrist = landmarks[0];
-    const palmSize = getDistance(landmarks[0], landmarks[9]);
-    if (palmSize < 0.01) return false;
-
-    // 1. Middle finger must be fully extended
-    const middleUp = getDistance(landmarks[12], wrist) > getDistance(landmarks[10], wrist) * 1.12;
-    
-    // 2. Index, ring, and pinky fingers must be folded (using a more lenient 1.05x threshold)
-    const indexFolded = getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.05;
-    const ringFolded  = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.05;
-    const pinkyFolded = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.05;
-
-    return middleUp && indexFolded && ringFolded && pinkyFolded;
-}
-
-/**
- * Detects the Korean finger heart gesture 🫰.
- * To be 100% accurate:
- * 1. The index finger must be extended (tip further from wrist than PIP). This rules out fists.
- * 2. The middle and ring fingers must be folded (tip no further than PIP; 1.12x is lenient
- *    enough for partial curls yet still below the 1.15x+ extension required by peace/“V”
- *    signs, so a forming peace sign cannot false-trigger the heart).
- * 3. The thumb tip and index tip must be close/crossing (distance < 0.85 * palmSize).
- */
-function isFingerHeart(landmarks) {
-    const wrist = landmarks[0];
-    const palmSize = getDistance(landmarks[0], landmarks[9]); // Wrist to middle MCP
-    if (palmSize < 0.01) return false;
-
-    // Index must be fully extended and straight (at least 1.15x PIP distance from wrist)
-    const indexUp = getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist) * 1.15;
-    
-    // Middle and ring must be clearly folded (lenient 1.12x, see comment above)
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.12;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.12;
-
-    if (!indexUp) return false;
-    if (!middleFolded || !ringFolded) return false;
-
-    // The thumb tip (4) and index tip (8) must be close/crossing
-    const distThumbIndex = getDistance(landmarks[4], landmarks[8]);
-    if (distThumbIndex > palmSize * 0.85) return false;
-
-    return true;
-}
+// Gesture predicates (isPeace / isMiddleFinger / isFingerHeart / getDistance)
+// live in ./gestures.js so the browser and the Node test suite share one source.
 
 // Toggle client-side camera capture
 async function toggleCamera() {
@@ -402,10 +326,12 @@ async function toggleCamera() {
             const spinner = loadingPlaceholder.querySelector('.spinner');
             if (spinner) spinner.style.display = 'block';
 
+            // FIX-27: cap native resolution. The canvas is clamped to 800px wide anyway, so
+            // requesting 1080p just wastes decode/GPU on the convolutions and MediaPipe runs.
             localStream = await navigator.mediaDevices.getUserMedia({
                 video: {
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
                     facingMode: "user"
                 },
                 audio: false
@@ -636,14 +562,31 @@ function interpolateSnapshot() {
         const p = prevSnapshot.crowns[i];
         return p ? lerpCrown(p, c) : c;
     });
-    const spawns = currSnapshot.spawns.map((s, i) => {
-        const p = prevSnapshot.spawns[i];
-        return p ? lerpSpawn(p, s) : s;
-    });
-    const cheekySpawns = currSnapshot.cheekySpawns.map((s, i) => {
-        const p = prevSnapshot.cheekySpawns[i];
-        return p ? lerpSpawn(p, s) : s;
-    });
+    // FIX-27: pair spawns by nearest position instead of array index. Spawn counts change
+    // between snapshots (hearts spawn/expire), so index pairing lerped unrelated hearts
+    // across the screen. Nearest-match with one-shot use keeps each particle's motion smooth.
+    const matchLerp = (currList, prevList) => {
+        const used = new Array(prevList.length).fill(false);
+        return currList.map(s => {
+            let best = -1;
+            let bestD = Infinity;
+            for (let i = 0; i < prevList.length; i++) {
+                if (used[i]) continue;
+                const d = Math.hypot(prevList[i].x - s.x, prevList[i].y - s.y);
+                if (d < bestD) {
+                    bestD = d;
+                    best = i;
+                }
+            }
+            if (best !== -1) {
+                used[best] = true;
+                return lerpSpawn(prevList[best], s);
+            }
+            return s;
+        });
+    };
+    const spawns = matchLerp(currSnapshot.spawns, prevSnapshot.spawns);
+    const cheekySpawns = matchLerp(currSnapshot.cheekySpawns, prevSnapshot.cheekySpawns);
     return { crowns, spawns, cheekySpawns };
 }
 
