@@ -57,8 +57,6 @@ const WAVING_WINDOW = 12;        // frames of wrist history to keep (~0.8s at 15
 const WAVING_RANGE_MIN = 0.15;   // min normalized (by palmSize) side-to-side range over the window
 const WAVING_STEP_MIN = 0.02;    // min normalized step to confirm a direction change (rejects jitter)
 const WAVING_REVERSALS_MIN = 2;  // min robust direction reversals (1 full back-and-forth cycle)
-const WAVING_TRAVEL_MIN = 0.30;  // FIX-25: min total path length (by palmSize) — catches a single
-                                 // fast one-way swipe that never reverses direction
 const WAVING_CHARGE = 25;        // charge per frame of confirmed waving
 const WAVING_DECAY = 5;          // decay per frame of no waving
 const WAVING_TRIGGER = 20;       // trigger threshold (a single confirmed frame now triggers)
@@ -974,12 +972,22 @@ async function runDetection() {
                     let noseHandIndex = -1;
                     for (let i = 0; i < results.landmarks.length; i++) {
                         const landmarks = results.landmarks[i];
+                        const wrist = landmarks[0];
                         const palmSize = getDistance(landmarks[0], landmarks[9]);
+                        if (palmSize < 0.01) continue;
                         const gate = Math.max(0.14, palmSize * 0.7); // scale the touch gate by hand size
                         const indexDist = Math.hypot(landmarks[8].x - noseX, landmarks[8].y - noseY);
                         const thumbDist = Math.hypot(landmarks[4].x - noseX, landmarks[4].y - noseY);
                         const palmDist = Math.hypot(landmarks[9].x - noseX, landmarks[9].y - noseY);
-                        if (indexDist < gate || thumbDist < gate || palmDist < gate) {
+                        const touchesNose = indexDist < gate || thumbDist < gate || palmDist < gate;
+                        // FIX-28: the nose hand must be a FIST/pinch (all four fingers folded).
+                        // Merely opening both palms near the face must not count as scubacat.
+                        const fisted =
+                            getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.05 &&
+                            getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.05 &&
+                            getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.05 &&
+                            getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.05;
+                        if (touchesNose && fisted) {
                             noseHandIndex = i;
                             break;
                         }
@@ -994,6 +1002,14 @@ async function runDetection() {
                         const wrist = wavingHand[0];
                         const palmSize = getDistance(wavingHand[0], wavingHand[9]);
                         if (palmSize < 0.01) continue;
+
+                        // FIX-28: the waving hand must be an OPEN PALM facing the camera
+                        // (index and middle extended, fingers straight). A fist or a loose
+                        // bent hand must not drive the wave.
+                        const palmOpen =
+                            getDistance(wavingHand[8], wrist) > getDistance(wavingHand[6], wrist) * 1.15 &&
+                            getDistance(wavingHand[12], wrist) > getDistance(wavingHand[10], wrist) * 1.15;
+                        if (!palmOpen) continue;
 
                         // FIX-07: gate the waving hand to the same face via proximity
                         // FIX-25: widen the gate — a horizontal wrist swipe swings further than
@@ -1036,47 +1052,37 @@ async function runDetection() {
                         }
                         const xRange = (maxX - minX) / palmSize;
                         const yRange = (maxY - minY) / palmSize;
-                        // Use the larger of the two axes so diagonal/vertical fanning also counts.
-                        const range = Math.max(xRange, yRange);
 
-                        // FIX-08: hysteresis-based reversal count. Instead of counting every
-                        // sign flip of dx (which jitter triggers), only register a reversal when
-                        // the hand has moved at least WAVING_STEP_MIN in the new direction since
-                        // the last confirmed direction. This filters sub-threshold jitter.
-                        // FIX-25: also accumulate totalTravel (path length by palmSize) so a
-                        // single fast one-way swipe is recognized even with 0 reversals.
+                        // FIX-28: the scubacat wave is a fast HORIZONTAL (kanan-kiri) oscillation.
+                        // Reject vertical/one-way motion so merely raising one's hands does not
+                        // trigger. Count direction reversals of the x-axis with a step gate that
+                        // filters sub-threshold jitter.
                         let reversals = 0;
-                        let totalTravel = 0;
                         let confirmedDir = 0;       // last confirmed direction (+1/-1)
-                        let sinceChange = 0;        // accumulated travel since last confirmed dir
+                        let sinceChange = 0;        // accumulated x travel since last confirmed dir
                         for (let k = 1; k < hist.xs.length; k++) {
                             const dx = hist.xs[k] - hist.xs[k - 1];
-                            const dy = hist.ys[k] - hist.ys[k - 1];
-                            // Use the dominant axis of overall motion for direction tracking.
-                            const step = (xRange >= yRange) ? dx : dy;
-                            const dir = step > 0 ? 1 : (step < 0 ? -1 : 0);
+                            const dir = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
                             if (dir === 0) continue;
-                            totalTravel += Math.abs(step) / palmSize;
                             if (confirmedDir === 0) {
                                 confirmedDir = dir;
-                                sinceChange = Math.abs(step) / palmSize;
+                                sinceChange = Math.abs(dx) / palmSize;
                             } else if (dir !== confirmedDir) {
-                                sinceChange += Math.abs(step) / palmSize;
+                                sinceChange += Math.abs(dx) / palmSize;
                                 if (sinceChange >= WAVING_STEP_MIN) {
                                     reversals++;
                                     confirmedDir = dir;
                                     sinceChange = 0;
                                 }
                             } else {
-                                sinceChange += Math.abs(step) / palmSize;
+                                sinceChange += Math.abs(dx) / palmSize;
                             }
                         }
 
-                        // FIX-08: a wave is confirmed when the hand has swept a wide range AND
-                        // reversed direction at least WAVING_REVERSALS_MIN times (one full
-                        // back-and-forth cycle = 2 reversals).
-                        // FIX-25: ... OR swept a long total path with a single fast swipe.
-                        if (range >= WAVING_RANGE_MIN && (reversals >= WAVING_REVERSALS_MIN || totalTravel >= WAVING_TRAVEL_MIN)) {
+                        // FIX-28: trigger requires x-dominant motion, a wide x span, and >=2
+                        // reversals (one full back-and-forth cycle with a turning point). A
+                        // single one-way swipe (e.g. uncovering the face) now NEVER triggers.
+                        if (xRange > yRange && xRange >= WAVING_RANGE_MIN && reversals >= WAVING_REVERSALS_MIN) {
                             currentFrameWaving = true;
                             break; // found a waving hand for this face
                         }
