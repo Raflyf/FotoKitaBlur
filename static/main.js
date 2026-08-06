@@ -1050,39 +1050,41 @@ async function runDetection() {
                             if (hist.ys[k] < minY) minY = hist.ys[k];
                             if (hist.ys[k] > maxY) maxY = hist.ys[k];
                         }
-                        const xRange = (maxX - minX) / palmSize;
                         const yRange = (maxY - minY) / palmSize;
+                        const range = Math.max(xRange, yRange);
 
-                        // FIX-28: the scubacat wave is a fast HORIZONTAL (kanan-kiri) oscillation.
-                        // Reject vertical/one-way motion so merely raising one's hands does not
-                        // trigger. Count direction reversals of the x-axis with a step gate that
-                        // filters sub-threshold jitter.
+                        // FIX-28: count direction reversals (hysteresis-gated) on the dominant
+                        // motion axis. We require >=2 reversals (a back-and-forth turn) so a
+                        // single one-way raise does not trigger. The fisted nose-hand + open-palm
+                        // wave-hand requirements above are what stop two open palms from firing.
                         let reversals = 0;
                         let confirmedDir = 0;       // last confirmed direction (+1/-1)
-                        let sinceChange = 0;        // accumulated x travel since last confirmed dir
+                        let sinceChange = 0;        // accumulated travel since last confirmed dir
                         for (let k = 1; k < hist.xs.length; k++) {
                             const dx = hist.xs[k] - hist.xs[k - 1];
-                            const dir = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+                            const dy = hist.ys[k] - hist.ys[k - 1];
+                            const step = (xRange >= yRange) ? dx : dy;
+                            const dir = step > 0 ? 1 : (step < 0 ? -1 : 0);
                             if (dir === 0) continue;
                             if (confirmedDir === 0) {
                                 confirmedDir = dir;
-                                sinceChange = Math.abs(dx) / palmSize;
+                                sinceChange = Math.abs(step) / palmSize;
                             } else if (dir !== confirmedDir) {
-                                sinceChange += Math.abs(dx) / palmSize;
+                                sinceChange += Math.abs(step) / palmSize;
                                 if (sinceChange >= WAVING_STEP_MIN) {
                                     reversals++;
                                     confirmedDir = dir;
                                     sinceChange = 0;
                                 }
                             } else {
-                                sinceChange += Math.abs(dx) / palmSize;
+                                sinceChange += Math.abs(step) / palmSize;
                             }
                         }
 
-                        // FIX-28: trigger requires x-dominant motion, a wide x span, and >=2
-                        // reversals (one full back-and-forth cycle with a turning point). A
-                        // single one-way swipe (e.g. uncovering the face) now NEVER triggers.
-                        if (xRange > yRange && xRange >= WAVING_RANGE_MIN && reversals >= WAVING_REVERSALS_MIN) {
+                        // FIX-28: trigger a quick oscillation (>=2 reversals) over a wide span.
+                        // Accepts horizontal/vertical/diagonal so the wave is not overly strict;
+                        // the fisted nose hand is the anti-false-positive guard.
+                        if (range >= WAVING_RANGE_MIN && reversals >= WAVING_REVERSALS_MIN) {
                             currentFrameWaving = true;
                             break; // found a waving hand for this face
                         }

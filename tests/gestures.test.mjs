@@ -49,7 +49,7 @@ function middleFingerHand() {
 
 function fingerHeartHand() {
     return makeHand({
-        [THUMB_T]: [0.29, -0.25], [INDEX_PIP]: [0.20, -0.10], [INDEX_T]: [0.30, -0.50],
+        [THUMB_T]: [0.30, -0.46], [INDEX_PIP]: [0.20, -0.10], [INDEX_T]: [0.30, -0.50],
         [MIDDLE_MCP]: [0.30, 0.30], [MIDDLE_PIP]: [0.30, -0.10], [MIDDLE_T]: [0.25, 0.00],
         [RING_PIP]: [0.50, 0.10], [RING_T]: [0.45, 0.05],
         [PINKY_PIP]: [0.55, 0.15], [PINKY_T]: [0.50, 0.10],

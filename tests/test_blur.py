@@ -81,7 +81,7 @@ def middle_finger_hand():
 
 def finger_heart_hand():
     return make_hand({
-        THUMB_T: (0.29, -0.25),
+        THUMB_T: (0.30, -0.46),
         INDEX_PIP: (0.20, -0.10),
         INDEX_T: (0.30, -0.50),
         MIDDLE_MCP: (0.30, 0.30),
