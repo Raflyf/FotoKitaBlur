@@ -157,3 +157,11 @@ before this audit: commit `8d21dd3`.
   frame, not per-face regions. A product decision, not a logic bug.
 - Audio loop times (133/146/52) are hard-coded offsets into the MP3s; brittle
   if the files are re-encoded, harmless as-is.
+
+## Fix run 2026-08-06 (FIX-28, scubacat false-trigger)
+
+- Opening both palms no longer triggers scubacat. Detection now requires the
+  intended gesture: nose hand is a FIST (all four fingers folded), the other
+  hand is an OPEN palm, and the wave is HORIZONTAL (x-dominant, >=2 reversals).
+- Removed the WAVING_TRAVEL_MIN single-swipe branch (one-way raises triggered
+  the cat with zero reversals) and its now-dead constant.
