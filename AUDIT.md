@@ -136,3 +136,24 @@ before this audit: commit `8d21dd3`.
 - Music files are gitignored by design (licensing); the app needs a local
   `media/music/` folder to play audio.
 - No CI yet; suggest running the unittest step on push.
+## Fix run 2026-08-06 (FIX-27)
+
+- **gesture predicates extracted** to `static/gestures.js` (single source for
+  browser + tests); `main.js` imports them. Removes the unguarded JS duplicate
+  that mirrored `blur.py` with zero automated coverage.
+- **tests/gestures.test.mjs** (node:test) mirrors `tests/test_blur.py`
+  fixtures -> the real frontend product logic now has coverage. Run:
+  `node --test tests/gestures.test.mjs`.
+- **interpolateSnapshot** pairs spawns by nearest position (not array index)
+  so hearts no longer lerp across the screen when spawn counts change.
+- **getUserMedia** capped at 1280x720 (canvas is clamped to 800px wide).
+- Verified: py_compile ok, `python -m unittest tests.test_blur` 11/11,
+  `node --test tests/gestures.test.mjs` 8/8, `node --check` both JS files.
+- Pushed to `raflyf` remote (origin returned 403; no access to `Raflyf02`).
+
+## Notes (not fixed, by design)
+
+- Whole-canvas CSS blur vs "memblur wajah" claim: peace blurs the entire
+  frame, not per-face regions. A product decision, not a logic bug.
+- Audio loop times (133/146/52) are hard-coded offsets into the MP3s; brittle
+  if the files are re-encoded, harmless as-is.
