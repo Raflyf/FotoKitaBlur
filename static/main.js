@@ -982,11 +982,13 @@ async function runDetection() {
                         const touchesNose = indexDist < gate || thumbDist < gate || palmDist < gate;
                         // FIX-28: the nose hand must be a FIST/pinch (all four fingers folded).
                         // Merely opening both palms near the face must not count as scubacat.
+                        // FIX-29: 1.10 tolerance — when a fist covers the nose, MediaPipe joint
+                        // positions become unreliable; strict 1.05 would reject genuine fists.
                         const fisted =
-                            getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.05 &&
-                            getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.05 &&
-                            getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.05 &&
-                            getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.05;
+                            getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.10 &&
+                            getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.10 &&
+                            getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.10 &&
+                            getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.10;
                         if (touchesNose && fisted) {
                             noseHandIndex = i;
                             break;

@@ -54,17 +54,18 @@ export function isFingerHeart(landmarks) {
     // Index must be fully extended and straight (at least 1.15x PIP distance from wrist)
     const indexUp = getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist) * 1.15;
 
-    // Middle and ring must be clearly folded (stricter 1.05x so a relaxed open
-    // hand, whose fingers extend like the index, does not read as a heart).
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.05;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.05;
+    // Middle and ring must be folded (1.10x — strict enough to reject a relaxed
+    // open hand but tolerant of real-hand landmark noise).
+    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.10;
+    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.10;
 
     if (!middleFolded || !ringFolded) return false;
 
     // Thumb tip (4) and index tip (8) must be PINCHED tight — an actual kiss, not a
-    // relaxed adjacency. 0.85*palm let every hand movement read as a heart.
+    // relaxed adjacency. 0.55*palm still lets a natural hand read as a heart in
+    // MediaPipe's normalized coords; 0.30 requires deliberate contact.
     const distThumbIndex = getDistance(landmarks[4], landmarks[8]);
-    if (distThumbIndex > palmSize * 0.55) return false;
+    if (distThumbIndex > palmSize * 0.30) return false;
 
     return true;
 }
