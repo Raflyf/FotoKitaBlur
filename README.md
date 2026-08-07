@@ -15,7 +15,6 @@ mana-mana). Ada juga CLI Python/OpenCV sebagai fallback mandiri.
 | 🫰 Love satu tangan | Ibu jari + telunjuk direkatkan membentuk hati | Emoji love melayang |
 | ❤️ Love dua tangan | Kedua tangan membentuk satu hati besar | Dua emoji love |
 | 🖕 Jari tengah | Jari tengah terangkat, sisanya ditekuk | Mahkota + emoji |
-| 🤿 Scubacat | Satu tangan menutup hidung, tangan lain melambai | Kucing selam + suara kicau |
 
 Panel **Kamus Gestur** (Bahasa Indonesia) bisa dibuka dari tombol di layar
 untuk melihat penjelasan tiap gestur.
@@ -38,7 +37,7 @@ python blur.py
 `python blur.py --help` untuk opsi flag (kamera, confidence, kernel blur, dll).
 Tekan `ESC` untuk keluar.
 
-Musik sudah disertakan di `media/music/` (`foto-kita-blur.mp3`, `kicau-mania.mp3`).
+Musik sudah disertakan di `media/music/` (`foto-kita-blur.mp3`).
 
 ## Struktur
 

@@ -35,33 +35,14 @@ let peaceHoldTimer = 0;
 let lastCrownTime = performance.now();
 const CROWN_ANGULAR_SPEED = 2.4; // radians per second (== 0.04/frame at 60fps)
 
-// Skeleton drawing & scubacat gesture states
 let showSkeleton = false;
 let lastHandLandmarks = [];
-let scubacatHoldTimer = 0;
-const SCUBACAT_HOLD_DURATION = 8;
-let wavingActivity = 0;
 
 // FIX-05: lightweight hand tracker (nearest-wrist match) for stable hand identity
 let prevHands = [];          // [{ id, x, y }]
 let nextHandId = 0;
 const HAND_MATCH_GATE = 0.3; // normalized max distance to re-identify a hand between frames
 
-// FIX-08: per-hand waving history for oscillation (fanning/flapping) detection.
-// Uses window RANGE (total side-to-side travel) + hysteresis-based reversals, which
-// robustly captures a fast fanning motion while rejecting MediaPipe wrist jitter.
-// The old instantaneous-displacement approach failed at wave turning points where the
-// hand momentarily slows, so the gesture never triggered.
-let wavingHistories = new Map(); // handId -> { xs: [wristX,...], ys: [wristY,...] }
-const WAVING_WINDOW = 12;        // frames of wrist history to keep (~0.8s at 15fps)
-const WAVING_RANGE_MIN = 0.15;   // min normalized (by palmSize) side-to-side range over the window
-const WAVING_STEP_MIN = 0.02;    // min normalized step to confirm a direction change (rejects jitter)
-const WAVING_REVERSALS_MIN = 2;  // min robust direction reversals (1 full back-and-forth cycle)
-const WAVING_CHARGE = 25;        // charge per frame of confirmed waving
-const WAVING_DECAY = 5;          // decay per frame of no waving
-const WAVING_TRIGGER = 20;       // trigger threshold (a single confirmed frame now triggers)
-
-// FIX-04: face tracking gates
 const FACE_MATCH_GATE = 0.4;     // normalized centroid distance to re-identify a face track
 
 // FIX-11: gesture-to-face assignment gate. Nearest-face assignment + one-gesture-per-face
@@ -111,7 +92,6 @@ const glossaryPanel = document.getElementById('glossary-panel');
 const btnGlossaryClose = document.getElementById('btn-glossary-close');
 const confInput = document.getElementById('input-conf');
 const confLabel = document.getElementById('label-conf');
-const catVideoEl = document.getElementById('cat-video');
 const fingerPanel = document.getElementById('finger-panel');
 const btnMusic = document.getElementById('btn-music');
 
@@ -378,17 +358,11 @@ function stopCamera() {
 
     if (fingerPanel) fingerPanel.style.display = 'none';
 
-    // Reset landmarks, waving activity, and cat-video states
     lastHandLandmarks = [];
-    wavingActivity = 0;
-    scubacatHoldTimer = 0;
 
     // FIX-21: reset face detection counter so mobile throttling restarts cleanly
     faceDetectCounter = 0;
     lastFaceResults = null;
-    // FIX-05 / FIX-08: reset hand tracker and per-hand waving histories
-    prevHands = [];
-    wavingHistories.clear();
     // FIX-04: retire all face tracks so stale crowns don't linger after restart
     faceTracks = [];
     // FIX-06 & FIX-12: clear interpolation snapshots
@@ -405,12 +379,8 @@ function stopCamera() {
     // FIX-17: reset redundant-write guard
     lastAppliedPeace = null;
 
-    if (catVideoEl) {
-        catVideoEl.style.display = 'none';
     }
-    if (kicauAudio) {
         // FIX-21: pause without re-seeking to 133 so a later restart resumes from the loop point naturally
-        kicauAudio.pause();
     }
 
     // Clear canvas with black fill and remove CSS blur filter
@@ -941,219 +911,7 @@ async function runDetection() {
                 prevHands = [];
             }
 
-            // Check scubacat gesture: one hand holding the nose and the other hand waving.
-            // FIX-07: iterate ALL hands/faces (not just index 0/1) to support multiple people.
-            // FIX-08: waving is detected via palmSize-normalized displacement + oscillation
-            // (direction reversals) rather than a tiny raw-displacement threshold.
-            let scubacatDetected = false;
-            let currentFrameWaving = false;
-
-            if (faceResults.detections && faceResults.detections.length > 0 && results.landmarks && results.landmarks.length >= 2) {
-                // FIX-07: for each face, find the nose-touching hand; then among the REMAINING
-                // hands find a waving one that is close to the SAME face bbox (same person).
-                for (const detection of faceResults.detections) {
-                    const bbox = detection.boundingBox;
-                    const faceCenterX = (bbox.originX + bbox.width / 2) / video.videoWidth;
-                    const faceCenterY = (bbox.originY + bbox.height / 2) / video.videoHeight;
-                    const faceW = bbox.width / video.videoWidth;
-                    const faceH = bbox.height / video.videoHeight;
-
-                    let noseX = null;
-                    let noseY = null;
-                    if (detection.keypoints && detection.keypoints.length > 2) {
-                        noseX = detection.keypoints[2].x;
-                        noseY = detection.keypoints[2].y;
-                    }
-                    if (noseX === null || noseY === null) continue;
-
-                    // 1. Find the hand touching this face's nose (search ALL hands)
-                    // FIX-25: the nose-hand is usually a CLOSED FIST covering the nose, so check
-                    // the palm center (landmark 9) as well as the fingertips; widen the gate.
-                    let noseHandIndex = -1;
-                    for (let i = 0; i < results.landmarks.length; i++) {
-                        const landmarks = results.landmarks[i];
-                        const wrist = landmarks[0];
-                        const palmSize = getDistance(landmarks[0], landmarks[9]);
-                        if (palmSize < 0.01) continue;
-                        const gate = Math.max(0.14, palmSize * 0.7); // scale the touch gate by hand size
-                        const indexDist = Math.hypot(landmarks[8].x - noseX, landmarks[8].y - noseY);
-                        const thumbDist = Math.hypot(landmarks[4].x - noseX, landmarks[4].y - noseY);
-                        const palmDist = Math.hypot(landmarks[9].x - noseX, landmarks[9].y - noseY);
-                        const touchesNose = indexDist < gate || thumbDist < gate || palmDist < gate;
-                        // FIX-28: the nose hand must be a FIST/pinch (all four fingers folded).
-                        // Merely opening both palms near the face must not count as scubacat.
-                        // FIX-29: 1.10 tolerance — when a fist covers the nose, MediaPipe joint
-                        // positions become unreliable; strict 1.05 would reject genuine fists.
-                        // FIX-32: require 2+ fingers folded (not all 4) because MediaPipe
-                        // distorts landmarks when a hand covers the nose.
-                        const fingerFolded = [
-                            getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.15,
-                            getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.15,
-                            getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.15,
-                            getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.15,
-                        ].filter(Boolean).length;
-                        const fisted = fingerFolded >= 2;
-                        if (touchesNose && fisted) {
-                            noseHandIndex = i;
-                            break;
-                        }
-                    }
-                    if (noseHandIndex === -1) continue;
-
-                    // 2. Among the REMAINING hands, find a waving one belonging to the same person
-                    //    (wrist within the face bbox, expanded slightly).
-                    for (let i = 0; i < results.landmarks.length; i++) {
-                        if (i === noseHandIndex) continue;
-                        const wavingHand = results.landmarks[i];
-                        const wrist = wavingHand[0];
-                        const palmSize = getDistance(wavingHand[0], wavingHand[9]);
-                        if (palmSize < 0.01) continue;
-
-                        // FIX-28: the waving hand must be an OPEN PALM facing the camera
-                        // (index and middle extended, fingers straight). A fist or a loose
-                        // bent hand must not drive the wave.
-                        const palmOpen =
-                            getDistance(wavingHand[8], wrist) > getDistance(wavingHand[6], wrist) * 1.15 &&
-                            getDistance(wavingHand[12], wrist) > getDistance(wavingHand[10], wrist) * 1.15;
-                        if (!palmOpen) continue;
-
-                        // FIX-07: gate the waving hand to the same face via proximity
-                        // FIX-25: widen the gate — a horizontal wrist swipe swings further than
-                        // the face bbox while staying on the same person.
-                        const inFaceX = Math.abs(wrist.x - faceCenterX) < faceW * 1.6;
-                        const inFaceY = Math.abs(wrist.y - faceCenterY) < faceH * 2.0;
-                        if (!inFaceX || !inFaceY) continue;
-
-                        // FIX-08: maintain a per-hand wrist history and require oscillation.
-                        // Use a stable key from the hand tracker if available, else fall back to index.
-                        const waveKey = (prevHands[i] && prevHands[i].id !== undefined) ? prevHands[i].id : i;
-                        let hist = wavingHistories.get(waveKey);
-                        if (!hist) {
-                            hist = { xs: [], ys: [] };
-                            wavingHistories.set(waveKey, hist);
-                        }
-
-                        // FIX-08: record the wrist into the rolling history window.
-                        hist.xs.push(wrist.x);
-                        hist.ys.push(wrist.y);
-                        if (hist.xs.length > WAVING_WINDOW) {
-                            hist.xs.shift();
-                            hist.ys.shift();
-                        }
-
-                        // Need a full window before evaluating.
-                        if (hist.xs.length < WAVING_WINDOW) continue;
-
-                        // FIX-08: window RANGE — total side-to-side travel, normalized by palmSize.
-                        // A fanning/waving hand sweeps a wide horizontal arc; a static or jittery
-                        // hand stays within a tiny range. This is robust at wave turning points
-                        // (where instantaneous velocity is ~0) because it measures total span, not
-                        // per-frame speed.
-                        let minX = 1, maxX = 0, minY = 1, maxY = 0;
-                        for (let k = 0; k < hist.xs.length; k++) {
-                            if (hist.xs[k] < minX) minX = hist.xs[k];
-                            if (hist.xs[k] > maxX) maxX = hist.xs[k];
-                            if (hist.ys[k] < minY) minY = hist.ys[k];
-                            if (hist.ys[k] > maxY) maxY = hist.ys[k];
-                        }
-                        const yRange = (maxY - minY) / palmSize;
-                        const range = Math.max(xRange, yRange);
-
-                        // FIX-28: count direction reversals (hysteresis-gated) on the dominant
-                        // motion axis. We require >=2 reversals (a back-and-forth turn) so a
-                        // single one-way raise does not trigger. The fisted nose-hand + open-palm
-                        // wave-hand requirements above are what stop two open palms from firing.
-                        let reversals = 0;
-                        let confirmedDir = 0;       // last confirmed direction (+1/-1)
-                        let sinceChange = 0;        // accumulated travel since last confirmed dir
-                        for (let k = 1; k < hist.xs.length; k++) {
-                            const dx = hist.xs[k] - hist.xs[k - 1];
-                            const dy = hist.ys[k] - hist.ys[k - 1];
-                            const step = (xRange >= yRange) ? dx : dy;
-                            const dir = step > 0 ? 1 : (step < 0 ? -1 : 0);
-                            if (dir === 0) continue;
-                            if (confirmedDir === 0) {
-                                confirmedDir = dir;
-                                sinceChange = Math.abs(step) / palmSize;
-                            } else if (dir !== confirmedDir) {
-                                sinceChange += Math.abs(step) / palmSize;
-                                if (sinceChange >= WAVING_STEP_MIN) {
-                                    reversals++;
-                                    confirmedDir = dir;
-                                    sinceChange = 0;
-                                }
-                            } else {
-                                sinceChange += Math.abs(step) / palmSize;
-                            }
-                        }
-
-                        // FIX-28: trigger a quick oscillation (>=2 reversals) over a wide span.
-                        // Accepts horizontal/vertical/diagonal so the wave is not overly strict;
-                        // the fisted nose hand is the anti-false-positive guard.
-                        if (range >= WAVING_RANGE_MIN && reversals >= WAVING_REVERSALS_MIN) {
-                            currentFrameWaving = true;
-                            break; // found a waving hand for this face
-                        }
-                    }
-
-                    if (currentFrameWaving) break; // a face already triggered waving
-                }
-            } else {
-                // FIX-08: clear histories when there are no faces/hands to wave
-                wavingHistories.clear();
-            }
-
-            // FIX-08: charge/decay with slower charge and faster decay, raised trigger threshold
-            if (currentFrameWaving) {
-                wavingActivity = Math.min(100, wavingActivity + WAVING_CHARGE);
-            } else {
-                wavingActivity = Math.max(0, wavingActivity - WAVING_DECAY);
-            }
-
-            // FIX-08: raised trigger threshold
-            scubacatDetected = wavingActivity > WAVING_TRIGGER;
-
-            if (scubacatDetected) {
-                scubacatHoldTimer = SCUBACAT_HOLD_DURATION;
-            } else if (scubacatHoldTimer > 0) {
-                scubacatHoldTimer--;
-            }
-
-            // Show or hide the picture-in-picture cat video overlay and play/pause kicauAudio (2:13 to 2:26)
-            // FIX-17: use cached catVideoEl reference
-            if (catVideoEl) {
-                if (scubacatHoldTimer > 0) {
-                    if (catVideoEl.style.display === 'none') {
-                        catVideoEl.style.display = 'block';
-                    }
-                    if (kicauAudio.paused) {
-                        kicauAudio.currentTime = 133; // Seek to 2:13
-                        kicauAudio.play().catch(e => console.log("Kicau audio play blocked:", e));
-                    }
-                } else {
-                    if (catVideoEl.style.display !== 'none') {
-                        catVideoEl.style.display = 'none';
-                    }
-                    if (!kicauAudio.paused) {
-                        // FIX-21: pause without re-seeking so the loop resumes cleanly on re-trigger
-                        kicauAudio.pause();
-                    }
-                }
-            }
-
-            // 2. Process detected faces and match them to gestures
-            const scaleX = canvas.width / video.videoWidth;
-            const scaleY = canvas.height / video.videoHeight;
-
-            // FIX-04: update persistent face tracks (with stable IDs + EMA smoothing) from the
-            // fresh detections. Tracks survive brief detection gaps (TRACK_KEEP_FRAMES).
-            if (faceResults.detections && faceResults.detections.length > 0) {
-                updateFaceTracks(faceResults.detections, scaleX, scaleY);
-            } else {
-                // FIX-04: still age existing tracks so they retire after the keep-alive window
-                for (const t of faceTracks) t.missedFrames++;
-                faceTracks = faceTracks.filter(t => t.missedFrames <= TRACK_KEEP_FRAMES);
-            }
+            
 
             // FIX-11: assign each gesture to its SINGLE nearest face (within a tight gate) instead
             // of spawning particles for every face within 0.6. One-gesture-per-face is enforced by
@@ -1296,27 +1054,10 @@ function updateFingerUI(id, extended) {
     }
 }
 
-// Kicau Mania Audio (plays 2:12 to 2:26)
-const kicauAudio = new Audio('/kicau');
-kicauAudio.preload = 'auto';
-kicauAudio.addEventListener('timeupdate', () => {
-    if (kicauAudio.currentTime >= 146) {
-        kicauAudio.currentTime = 133;
     }
 });
 
-// FIX-26: unlock kicau autoplay on the first real user gesture. The scubacat
-// audio is played from inside the detection loop (not a direct user gesture),
-// so Chrome's autoplay policy blocks it unless the element was already
-// "opened" by a gesture. Play-then-pause once on the first interaction.
-function unlockKicauAudio() {
-    if (!kicauAudio) return;
-    const p = kicauAudio.play();
-    if (p && p.then) p.then(() => kicauAudio.pause()).catch(() => {});
 }
-window.addEventListener('pointerdown', unlockKicauAudio, { once: true });
-window.addEventListener('touchstart', unlockKicauAudio, { once: true });
-window.addEventListener('keydown', unlockKicauAudio, { once: true });
 
 // Native HTML5 Audio Player integration
 const audio = document.getElementById('audio-player');

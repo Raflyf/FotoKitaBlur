@@ -591,18 +591,3 @@ input:checked + .slider.round:before {
 }
 
 /* Picture-in-Picture cat gif styling (1/4 size of preview) */
-#cat-video {
-  position: absolute;
-  border: 3px solid var(--accent);
-  border-radius: 14px;
-  width: 25%;
-  max-width: 240px;
-  aspect-ratio: 1;
-  object-fit: cover;
-  z-index: 100;
-  left: 20px;
-  top: 20px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
-  transition: all 0.3s ease;
-  pointer-events: none;
-}
