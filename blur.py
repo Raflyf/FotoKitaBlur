@@ -98,12 +98,16 @@ class PeaceBlurDetector:
             return False
         index_dist = get_distance(landmarks[8], wrist)
         middle_dist = get_distance(landmarks[12], wrist)
-        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.25:
+        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.40:
             return False
-        middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.15
-        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.15
-        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.15
+        middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.30
+        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.30
+        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.30
         if not middle_folded or not ring_folded or not pinky_folded:
+            return False
+        # Thumb must be ABOVE the index PIP (palm-camera coords). In a fist the
+        # thumb sits behind/below the index finger.
+        if landmarks[4].y > landmarks[6].y + palm_size * 0.05:
             return False
         return get_distance(landmarks[4], landmarks[8]) < palm_size * 0.40
 

@@ -44,7 +44,7 @@ export function isMiddleFinger(landmarks) {
 }
 
 /**
- * Korean finger heart: index extended well beyond middle (ratio >= 1.25),
+ * Korean finger heart: index extended well beyond middle (ratio >= 1.40),
  * middle+ring+pinky folded, thumb tip close to index tip (< 0.40 palm).
  * The index/middle ratio is the KEY discriminator: a fist has ratio ~1.0
  * because all fingertips reach similar distances from wrist.
@@ -60,17 +60,21 @@ export function isFingerHeart(landmarks) {
     const indexDist  = getDistance(landmarks[8], wrist);
     const middleDist = getDistance(landmarks[12], wrist);
     if (middleDist < 0.01) return false;
-    if (indexDist / middleDist < 1.25) return false;
+    if (indexDist / middleDist < 1.40) return false;
 
     // Middle, ring, pinky must be folded (1.15x — tolerant of real-hand noise)
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.15;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.15;
-    const pinkyFolded  = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.15;
+    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.30;
+    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.30;
+    const pinkyFolded  = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.30;
     if (!middleFolded || !ringFolded || !pinkyFolded) return false;
 
     // Thumb tip and index tip must be PINCHED tight
     const distThumbIndex = getDistance(landmarks[4], landmarks[8]);
     if (distThumbIndex > palmSize * 0.40) return false;
+
+    // KEY: thumb must be ABOVE the index PIP (palm-camera coords), not tucked
+    // into the palm. In a fist the thumb sits behind/below the index.
+    if (landmarks[4].y > landmarks[6].y + palmSize * 0.05) return false;
 
     return true;
 }
