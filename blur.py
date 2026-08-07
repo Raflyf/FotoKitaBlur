@@ -108,6 +108,12 @@ class PeaceBlurDetector:
         # thumb sits behind/below the index finger.
         if landmarks[4].y > landmarks[6].y + palm_size * 0.15:
             return False
+        thumb_side = landmarks[4].x - landmarks[6].x
+        index_side = landmarks[8].x - landmarks[6].x
+        if thumb_side == 0 or index_side == 0:
+            return False
+        if (thumb_side > 0) == (index_side > 0):
+            return False
         return get_distance(landmarks[4], landmarks[8]) < palm_size * 0.25
 
     def process_frame(self, frame, blur_kernel_size=None):

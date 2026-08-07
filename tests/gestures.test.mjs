@@ -48,8 +48,10 @@ function middleFingerHand() {
 }
 
 function fingerHeartHand() {
+    // True crossed heart: index tip curls back over the thumb, so index tip and
+    // thumb tip sit on opposite sides of the index PIP joint, with tips pinched.
     return makeHand({
-        [THUMB_T]: [0.30, -0.46], [INDEX_PIP]: [0.20, -0.10], [INDEX_T]: [0.30, -0.50],
+        [THUMB_T]: [0.28, -0.42], [INDEX_PIP]: [0.27, 0.00], [INDEX_T]: [0.22, -0.42],
         [MIDDLE_MCP]: [0.30, 0.30], [MIDDLE_PIP]: [0.30, -0.10], [MIDDLE_T]: [0.25, 0.00],
         [RING_PIP]: [0.50, 0.10], [RING_T]: [0.45, 0.05],
         [PINKY_PIP]: [0.55, 0.15], [PINKY_T]: [0.50, 0.10],
@@ -79,3 +81,30 @@ function pistolHand() {
     });
 }
 test("pistol pose not finger heart", () => assert.equal(isFingerHeart(pistolHand()), false));
+
+// Regression: touching thumb and index tips is only a pinch, not a crossed heart.
+function pinchHand() {
+    return makeHand({
+        [THUMB_T]: [0.35, -0.35], [INDEX_PIP]: [0.25, -0.10], [INDEX_T]: [0.35, -0.35],
+        [MIDDLE_MCP]: [0.30, 0.30], [MIDDLE_PIP]: [0.30, -0.10], [MIDDLE_T]: [0.25, 0.00],
+        [RING_PIP]: [0.50, 0.10], [RING_T]: [0.45, 0.05],
+        [PINKY_PIP]: [0.55, 0.15], [PINKY_T]: [0.50, 0.10],
+        2: [0.05, 0.15], 5: [0.15, 0.10]
+    });
+}
+test("pinch pose not finger heart", () => assert.equal(isFingerHeart(pinchHand()), false));
+
+// Crossed heart, large frame so the index-tip / thumb-tip pinch fits the
+// 0.25-palm gate while still having the tips on opposite sides of the PIP.
+function crossedFingerHeartHand() {
+    return makeHand({
+        [THUMB_T]: [0.25, -0.46], [INDEX_PIP]: [0.30, 0.00], [INDEX_T]: [0.35, -0.46],
+        [MIDDLE_MCP]: [0.30, 0.30], [MIDDLE_PIP]: [0.30, -0.10], [MIDDLE_T]: [0.25, 0.00],
+        [RING_PIP]: [0.50, 0.10], [RING_T]: [0.45, 0.05],
+        [PINKY_PIP]: [0.55, 0.15], [PINKY_T]: [0.50, 0.10],
+    });
+}
+test("crossed finger heart detected", () => assert.equal(isFingerHeart(crossedFingerHeartHand()), true));
+
+// Existing fixture remains a compatibility check for the original landmark shape.
+test("finger heart fixture detected", () => assert.equal(isFingerHeart(fingerHeartHand()), true));

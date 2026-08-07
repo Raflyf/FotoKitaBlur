@@ -76,5 +76,14 @@ export function isFingerHeart(landmarks) {
     // into the palm. In a fist the thumb sits behind/below the index.
     if (landmarks[4].y > landmarks[6].y + palmSize * 0.15) return false;
 
+    // CROSSING: in a real crossed heart the thumb tip and index tip sit on
+    // OPPOSITE sides of the index PIP joint (the thumb crosses over the index
+    // shaft). A pinch has both tips on the same side of the PIP, so without
+    // this gate a thumb-index-tips-touching pose leaks through (regression).
+    const thumbSide = landmarks[4].x - landmarks[6].x;
+    const indexSide = landmarks[8].x - landmarks[6].x;
+    if (thumbSide === 0 || indexSide === 0) return false;
+    if (Math.sign(thumbSide) === Math.sign(indexSide)) return false;
+
     return true;
 }
