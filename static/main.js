@@ -1,5 +1,5 @@
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js?v=6";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js?v=7";
 
 let handLandmarker;
 let faceDetector;
@@ -908,7 +908,18 @@ async function runDetection() {
                 prevHands = [];
             }
 
-            
+            // Process detected faces and match them to gestures
+            const scaleX = canvas.width / video.videoWidth;
+            const scaleY = canvas.height / video.videoHeight;
+
+            // Update persistent face tracks (stable IDs + EMA smoothing).
+            if (faceResults.detections && faceResults.detections.length > 0) {
+                updateFaceTracks(faceResults.detections, scaleX, scaleY);
+            } else {
+                // Still age existing tracks so they retire after the keep-alive window
+                for (const t of faceTracks) t.missedFrames++;
+                faceTracks = faceTracks.filter(t => t.missedFrames <= TRACK_KEEP_FRAMES);
+            }
 
             // FIX-11: assign each gesture to its SINGLE nearest face (within a tight gate) instead
             // of spawning particles for every face within 0.6. One-gesture-per-face is enforced by
