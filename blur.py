@@ -98,7 +98,7 @@ class PeaceBlurDetector:
             return False
         index_dist = get_distance(landmarks[8], wrist)
         middle_dist = get_distance(landmarks[12], wrist)
-        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.40:
+        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.20:
             return False
         middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.30
         ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.30
