@@ -205,3 +205,23 @@ Python `is_finger_heart` synced to match JS thresholds exactly.
 
 - Removed orphan scubacat glossary card from `templates/index.html`
   (leftover from FIX-34).
+
+## FIX-37 — Require crossed thumb/index for finger heart
+
+**Date:** 2026-08-07
+**Commit:** `aaf5d8f`
+**Files:** `static/gestures.js`, `blur.py`, `static/main.js`, `tests/gestures.test.mjs`, `tests/test_blur.py`
+
+### Root cause
+
+After FIX-36, the `isFingerHeart` predicate successfully rejected "pistol"
+hands but still false-triggered on a "pinch" (thumb tip and index tip touching
+but not crossing). A true Korean finger heart crosses the thumb tip over the
+index finger.
+
+### Changes
+
+- Added crossing check: `Math.sign(landmarks[4].x - landmarks[6].x) !== Math.sign(landmarks[8].x - landmarks[6].x)`. This forces the thumb tip and index tip to sit on opposite sides of the index PIP joint.
+- Synced identical check to `blur.py`.
+- Bumped `gestures.js?v=9` in `main.js`.
+- Added `pinchHand` (rejected) and `crossedFingerHeartHand` (accepted) tests.
