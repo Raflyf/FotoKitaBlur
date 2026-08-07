@@ -225,3 +225,32 @@ index finger.
 - Synced identical check to `blur.py`.
 - Bumped `gestures.js?v=9` in `main.js`.
 - Added `pinchHand` (rejected) and `crossedFingerHeartHand` (accepted) tests.
+
+## FIX-38 — Replace pinch distance with 2D line-segment intersection
+
+**Date:** 2026-08-07
+**Commit:** `35ff02e`
+**Files:** `static/gestures.js`, `blur.py`, `static/main.js`, `tests/gestures.test.mjs`, `tests/test_blur.py`
+
+### Root cause
+
+Previous thresholds required thumb tip and index tip to be close in 2D space
+(`< 0.25 × palm`). In real finger hearts (as shown in user photos), the index
+finger extends across/past the thumb so their tips do not touch; while non-love
+pinches (where tips touch on the same side) were falsely passing.
+
+### Changes
+
+- Removed `distThumbIndex` distance gate completely.
+- Added 2D line segment intersection gate using CCW (counter-clockwise)
+  determinant test: checks whether the thumb shaft (landmarks 3→4) visually
+  crosses the index shaft (landmarks 6→8).
+- Fold thresholds relaxed to `1.65×` so hands tilted toward/away from the camera
+  do not fail fold checks.
+- Synced identical CCW logic to Python `blur.py`.
+- Bumped `gestures.js?v=10` in `main.js`.
+
+### Tests
+
+- All 9 JS tests (`tests/gestures.test.mjs`) and 11 Python tests
+  (`tests/test_blur.py`) pass.
