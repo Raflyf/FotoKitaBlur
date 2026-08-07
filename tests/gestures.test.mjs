@@ -84,4 +84,18 @@ test("middle finger detected", () => assert.equal(isMiddleFinger(middleFingerHan
 test("fist not middle finger", () => assert.equal(isMiddleFinger(fistHand()), false));
 test("pinch pose not finger heart", () => assert.equal(isFingerHeart(pinchHand()), false));
 test("crossed finger heart detected", () => assert.equal(isFingerHeart(crossedFingerHeartHand()), true));
+
+// Regression: user reported a near-touch ("hanya menempel sedikit") still
+// triggering heart. Two fingertips within a few pixels but segments parallel
+// (or only brushing) must NOT trigger heart.
+function nearTouchHand() {
+    return makeHand({
+        3: [0.20, -0.30], [THUMB_T]: [0.30, -0.40],
+        [INDEX_PIP]: [0.20, -0.30], 7: [0.25, -0.35], [INDEX_T]: [0.31, -0.40],
+        [MIDDLE_MCP]: [0.30, 0.30], [MIDDLE_PIP]: [0.30, -0.10], [MIDDLE_T]: [0.25, 0.00],
+        [RING_PIP]: [0.50, 0.10], [RING_T]: [0.45, 0.05],
+        [PINKY_PIP]: [0.55, 0.15], [PINKY_T]: [0.50, 0.10],
+    });
+}
+test("near touch not finger heart", () => assert.equal(isFingerHeart(nearTouchHand()), false));
 test("peace not finger heart", () => assert.equal(isFingerHeart(peaceHand()), false));

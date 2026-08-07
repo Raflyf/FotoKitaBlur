@@ -1,5 +1,5 @@
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js?v=10";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js?v=11";
 
 let handLandmarker;
 let faceDetector;
@@ -648,9 +648,9 @@ function renderLoop() {
 
             // Choose emojis based purely on which toggle switch is active
             let emojis = null;
-            if (showCheeky) {
+            if (showCheeky && crown.isCheeky) {
                 emojis = ['🖕', '😜', '🤪', '🖕', '😝', '👅'];
-            } else if (showCrown) {
+            } else if (showCrown && crown.isHeart) {
                 emojis = ['💖', '❤️', '💕', '💗', '💓', '💝'];
             }
 
@@ -936,6 +936,7 @@ async function runDetection() {
 
             for (const track of faceTracks) {
                 let isFaceCheeky = false;
+                let isFaceHeart = false;
 
                 // FIX-11 + FIX-23: nearest-face assignment for cheeky gestures
                 let cheekyCountForFace = 0;
@@ -958,14 +959,19 @@ async function runDetection() {
                     const g = heartGestures[gi];
                     const dist = Math.hypot(track.normX - g.x, track.normY - g.y);
                     if (dist < GESTURE_FACE_GATE) {
+                        isFaceHeart = true;
                         newSpawns.push({ x: g.x, y: g.y });
                         heartConsumed.add(gi);
                         heartCountForFace++;
                     }
                 }
 
-                // Mark this track's crown type (cheeky if a cheeky gesture matched, else heart)
+                // FIX-39: mark crown type. Heart-only when at least one heart gesture matched,
+                // else cheeky when a cheeky gesture matched. Faces with no gesture at all
+                // do NOT produce any crown / ambient hearts, fixing the regression where
+                // heart emojis appeared simply because a face was visible.
                 track.isCheeky = isFaceCheeky;
+                track.isHeart = isFaceHeart;
             }
 
             // FIX-04: build the crown list from the (smoothed, tracked) face tracks
@@ -974,7 +980,8 @@ async function runDetection() {
                 headY: t.headY,
                 headWidth: t.headWidth,
                 headHeight: t.headHeight,
-                isCheeky: t.isCheeky
+                isCheeky: t.isCheeky,
+                isHeart: t.isHeart
             }));
 
             // FIX-02: temporal hysteresis (latch) for the peace/blur gesture.
@@ -1001,7 +1008,7 @@ async function runDetection() {
             // Update ambient-particle states (read cached toggles)
             const showCrown = crownCheckbox ? crownCheckbox.checked : false;
             const showCheeky = cheekyCheckbox ? cheekyCheckbox.checked : false;
-            lastHeartState = showCrown && (newCrowns.length > 0 && !newCrowns.some(c => c.isCheeky));
+            lastHeartState = showCrown && newCrowns.some(c => c.isHeart);
             lastCheekyState = showCheeky && newCrowns.some(c => c.isCheeky);
         }
     } catch (err) {
