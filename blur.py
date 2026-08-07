@@ -90,8 +90,8 @@ class PeaceBlurDetector:
 
     @staticmethod
     def is_finger_heart(landmarks):
-        """Korean finger heart: index up, middle+ring folded (lenient 1.12x),
-        thumb tip close to index tip (< 0.85 palm). Mirrors main.js."""
+        """Korean finger heart: index/middle ratio >= 1.25, middle+ring+pinky
+        folded (1.15x), thumb tip close to index tip (< 0.40 palm)."""
         wrist = landmarks[0]
         palm_size = get_distance(landmarks[0], landmarks[9])
         if palm_size < 0.01:
@@ -100,9 +100,9 @@ class PeaceBlurDetector:
         middle_dist = get_distance(landmarks[12], wrist)
         if middle_dist < 0.01 or (index_dist / middle_dist) < 1.25:
             return False
-        middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.10
-        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.10
-        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.10
+        middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.15
+        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.15
+        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.15
         if not middle_folded or not ring_folded or not pinky_folded:
             return False
         return get_distance(landmarks[4], landmarks[8]) < palm_size * 0.40
