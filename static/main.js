@@ -1,5 +1,5 @@
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js?v=4";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js?v=5";
 
 let handLandmarker;
 let faceDetector;
@@ -984,11 +984,15 @@ async function runDetection() {
                         // Merely opening both palms near the face must not count as scubacat.
                         // FIX-29: 1.10 tolerance — when a fist covers the nose, MediaPipe joint
                         // positions become unreliable; strict 1.05 would reject genuine fists.
-                        const fisted =
-                            getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.10 &&
-                            getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.10 &&
-                            getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.10 &&
-                            getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.10;
+                        // FIX-32: require 2+ fingers folded (not all 4) because MediaPipe
+                        // distorts landmarks when a hand covers the nose.
+                        const fingerFolded = [
+                            getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.15,
+                            getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.15,
+                            getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.15,
+                            getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.15,
+                        ].filter(Boolean).length;
+                        const fisted = fingerFolded >= 2;
                         if (touchesNose && fisted) {
                             noseHandIndex = i;
                             break;
