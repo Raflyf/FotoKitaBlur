@@ -96,12 +96,16 @@ class PeaceBlurDetector:
         palm_size = get_distance(landmarks[0], landmarks[9])
         if palm_size < 0.01:
             return False
-        index_up = get_distance(landmarks[8], wrist) > get_distance(landmarks[6], wrist) * 1.15
+        index_dist = get_distance(landmarks[8], wrist)
+        middle_dist = get_distance(landmarks[12], wrist)
+        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.25:
+            return False
         middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.10
         ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.10
-        if not index_up or not middle_folded or not ring_folded:
+        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.10
+        if not middle_folded or not ring_folded or not pinky_folded:
             return False
-        return get_distance(landmarks[4], landmarks[8]) < palm_size * 0.30
+        return get_distance(landmarks[4], landmarks[8]) < palm_size * 0.40
 
     def process_frame(self, frame, blur_kernel_size=None):
         """Detect the peace sign on a (non-flipped) BGR frame.
