@@ -60,17 +60,17 @@ export function isFingerHeart(landmarks) {
     const indexDist  = getDistance(landmarks[8], wrist);
     const middleDist = getDistance(landmarks[12], wrist);
     if (middleDist < 0.01) return false;
-    if (indexDist / middleDist < 1.20) return false;
+    if (indexDist / middleDist < 1.15) return false;
 
-    // Middle, ring, pinky must be folded (1.15x — tolerant of real-hand noise)
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.30;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.30;
-    const pinkyFolded  = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.30;
+    // Middle, ring, pinky must be folded (1.45x tolerant of real-hand noise)
+    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.45;
+    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.45;
+    const pinkyFolded  = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.45;
     if (!middleFolded || !ringFolded || !pinkyFolded) return false;
 
     // Thumb tip and index tip must be PINCHED tight
     const distThumbIndex = getDistance(landmarks[4], landmarks[8]);
-    if (distThumbIndex > palmSize * 0.40) return false;
+    if (distThumbIndex > palmSize * 0.25) return false;
 
     // KEY: thumb must be ABOVE the index PIP (palm-camera coords), not tucked
     // into the palm. In a fist the thumb sits behind/below the index.

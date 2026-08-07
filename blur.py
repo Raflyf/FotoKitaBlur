@@ -90,26 +90,25 @@ class PeaceBlurDetector:
 
     @staticmethod
     def is_finger_heart(landmarks):
-        """Korean finger heart: index/middle ratio >= 1.25, middle+ring+pinky
-        folded (1.15x), thumb tip close to index tip (< 0.40 palm)."""
+        """Korean finger heart: index/middle ratio >= 1.15, middle+ring+pinky folded (1.45x), thumb tip close to index tip (< 0.25 palm)."""
         wrist = landmarks[0]
         palm_size = get_distance(landmarks[0], landmarks[9])
         if palm_size < 0.01:
             return False
         index_dist = get_distance(landmarks[8], wrist)
         middle_dist = get_distance(landmarks[12], wrist)
-        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.20:
+        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.15:
             return False
-        middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.30
-        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.30
-        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.30
+        middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.45
+        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.45
+        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.45
         if not middle_folded or not ring_folded or not pinky_folded:
             return False
         # Thumb must be ABOVE the index PIP (palm-camera coords). In a fist the
         # thumb sits behind/below the index finger.
-        if landmarks[4].y > landmarks[6].y + palm_size * 0.05:
+        if landmarks[4].y > landmarks[6].y + palm_size * 0.15:
             return False
-        return get_distance(landmarks[4], landmarks[8]) < palm_size * 0.40
+        return get_distance(landmarks[4], landmarks[8]) < palm_size * 0.25
 
     def process_frame(self, frame, blur_kernel_size=None):
         """Detect the peace sign on a (non-flipped) BGR frame.

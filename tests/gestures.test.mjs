@@ -66,3 +66,16 @@ test("middle finger detected", () => assert.equal(isMiddleFinger(middleFingerHan
 test("fist not middle finger", () => assert.equal(isMiddleFinger(fistHand()), false));
 test("finger heart detected", () => assert.equal(isFingerHeart(fingerHeartHand()), true));
 test("peace not finger heart", () => assert.equal(isFingerHeart(peaceHand()), false));
+
+// Regression: pistol / "pointing with thumb up" must NOT trigger a finger heart.
+// User reported a non-love hand pose (telunjuk menunjuk + jempol naik) producing
+// heart emojis, so we anchor the rejection with a concrete landmark fixture.
+function pistolHand() {
+    return makeHand({
+        [THUMB_T]: [0.05, -0.30], [INDEX_PIP]: [0.10, -0.10], [INDEX_T]: [0.15, -0.55],
+        [MIDDLE_MCP]: [0.30, 0.30], [MIDDLE_PIP]: [0.25, 0.10], [MIDDLE_T]: [0.30, 0.10],
+        [RING_PIP]: [0.50, 0.10], [RING_T]: [0.45, 0.10],
+        [PINKY_PIP]: [0.55, 0.15], [PINKY_T]: [0.50, 0.15],
+    });
+}
+test("pistol pose not finger heart", () => assert.equal(isFingerHeart(pistolHand()), false));
