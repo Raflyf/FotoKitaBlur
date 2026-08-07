@@ -254,3 +254,32 @@ pinches (where tips touch on the same side) were falsely passing.
 
 - All 9 JS tests (`tests/gestures.test.mjs`) and 11 Python tests
   (`tests/test_blur.py`) pass.
+
+## FIX-39 — Gate heart crown & ambient particles on actual heart gesture
+
+**Date:** 2026-08-07
+**Commit:** `d72105b`
+**Files:** `static/main.js`, `tests/gestures.test.mjs`
+
+### Root cause
+
+The **Show Heart Crown** checkbox (`showCrown`) was gating *ambient heart particles*
+and *crown emojis* solely on whether a face was visible. As long as the checkbox
+was on and any face existed, `lastHeartState` became `true`, causing continuous
+heart-particle spawning and crown rendering even when the user was **not** doing
+a finger-heart gesture. This made it *look* like the heart gesture was triggering
+from a light touch / non-gesture.
+
+### Changes
+
+- Added `isFaceHeart` flag during face-gesture assignment; set when a heart
+  gesture is matched to a face within `GESTURE_FACE_GATE`.
+- Propagate `isHeart` to the crown data (`newCrowns`).
+- Crown rendering now emits heart emojis **only** for faces with `isHeart === true`
+  when the "Show Heart Crown" checkbox is on (and cheeky emojis only for
+  `isCheeky` faces when the "Show Middle Finger Crown" checkbox is on).
+- `lastHeartState` now derived from `newCrowns.some(c => c.isHeart)` instead of
+  `newCrowns.length > 0`, so ambient particles spawn **only** during/after real
+  heart gestures.
+- Added `nearTouchHand()` regression test to ensure fingertips merely touching
+  does not trigger heart.
