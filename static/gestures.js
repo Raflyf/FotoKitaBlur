@@ -5,23 +5,20 @@ export function getDistance(p1, p2) {
     return Math.hypot(p1.x - p2.x, p1.y - p2.y);
 }
 
+function ccw(A, B, C) {
+    return (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x);
+}
+
 export function isPeace(landmarks) {
     const wrist = landmarks[0];
     const palmSize = getDistance(landmarks[0], landmarks[9]);
     if (palmSize < 0.01) return false;
 
-    // 1. Strict extension: index and middle finger must be fully extended perpendicularly
     const indexUp  = getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist) * 1.15;
     const middleUp = getDistance(landmarks[12], wrist) > getDistance(landmarks[10], wrist) * 1.15;
-
-    // 2. Strict fold: ring and pinky must be folded tightly
     const ringFolded  = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 0.85;
     const pinkyFolded = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 0.85;
-
-    // 3. V-Shape spread: index tip and middle tip must be spread apart in a "V"
     const fingersSpread = getDistance(landmarks[8], landmarks[12]) > palmSize * 0.32;
-
-    // 4. Thumb folded: thumb tip must be close to palm
     const thumbFolded = getDistance(landmarks[4], wrist) < palmSize * 1.1;
 
     return indexUp && middleUp && ringFolded && pinkyFolded && fingersSpread && thumbFolded;
@@ -32,10 +29,7 @@ export function isMiddleFinger(landmarks) {
     const palmSize = getDistance(landmarks[0], landmarks[9]);
     if (palmSize < 0.01) return false;
 
-    // 1. Middle finger must be fully extended
     const middleUp = getDistance(landmarks[12], wrist) > getDistance(landmarks[10], wrist) * 1.12;
-
-    // 2. Index, ring, and pinky must be folded (using a more lenient 1.05x threshold)
     const indexFolded = getDistance(landmarks[8], wrist) < getDistance(landmarks[6], wrist) * 1.05;
     const ringFolded  = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.05;
     const pinkyFolded = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.05;
@@ -44,46 +38,37 @@ export function isMiddleFinger(landmarks) {
 }
 
 /**
- * Korean finger heart: index extended well beyond middle (ratio >= 1.40),
- * middle+ring+pinky folded, thumb tip close to index tip (< 0.40 palm).
- * The index/middle ratio is the KEY discriminator: a fist has ratio ~1.0
- * because all fingertips reach similar distances from wrist.
+ * Korean finger heart: index extended beyond middle, middle/ring/pinky folded,
+ * and the thumb shaft visually crosses the index shaft in the 2D projection.
+ * Both a pinch (touching tips, same side) and a pistol (no crossing) fail the
+ * segment-intersection gate, while a real crossed heart passes.
  */
 export function isFingerHeart(landmarks) {
     const wrist = landmarks[0];
     const palmSize = getDistance(landmarks[0], landmarks[9]);
     if (palmSize < 0.01) return false;
 
-    // KEY DISCRIMINATOR: index must reach WELL beyond middle finger.
-    // In a finger heart index is fully extended while middle is folded.
-    // In a fist all fingertips have similar reach, ratio stays ~1.0.
-    const indexDist  = getDistance(landmarks[8], wrist);
+    // Index must reach well beyond the (folded) middle finger.
+    const indexDist = getDistance(landmarks[8], wrist);
     const middleDist = getDistance(landmarks[12], wrist);
-    if (middleDist < 0.01) return false;
-    if (indexDist / middleDist < 1.15) return false;
+    if (middleDist < 0.01 || indexDist / middleDist < 1.15) return false;
 
-    // Middle, ring, pinky must be folded (1.45x tolerant of real-hand noise)
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.45;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.45;
-    const pinkyFolded  = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.45;
+    // Middle/ring/pinky must be folded.
+    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.65;
+    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.65;
+    const pinkyFolded  = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.65;
     if (!middleFolded || !ringFolded || !pinkyFolded) return false;
 
-    // Thumb tip and index tip must be PINCHED tight
-    const distThumbIndex = getDistance(landmarks[4], landmarks[8]);
-    if (distThumbIndex > palmSize * 0.25) return false;
-
-    // KEY: thumb must be ABOVE the index PIP (palm-camera coords), not tucked
-    // into the palm. In a fist the thumb sits behind/below the index.
+    // Thumb must sit above the index PIP (not tucked into the palm).
     if (landmarks[4].y > landmarks[6].y + palmSize * 0.15) return false;
 
-    // CROSSING: in a real crossed heart the thumb tip and index tip sit on
-    // OPPOSITE sides of the index PIP joint (the thumb crosses over the index
-    // shaft). A pinch has both tips on the same side of the PIP, so without
-    // this gate a thumb-index-tips-touching pose leaks through (regression).
-    const thumbSide = landmarks[4].x - landmarks[6].x;
-    const indexSide = landmarks[8].x - landmarks[6].x;
-    if (thumbSide === 0 || indexSide === 0) return false;
-    if (Math.sign(thumbSide) === Math.sign(indexSide)) return false;
-
-    return true;
+    // The defining feature of a crossed heart: the thumb shaft (ip->tip, LMs
+    // 3->4) VISUALLY INTERSECTS the index shaft (pip->tip, LMs 6->8). A pinch
+    // touches at the tips but does not cross; a pistol never crosses.
+    const a = landmarks[3];
+    const b = landmarks[4];
+    const c = landmarks[6];
+    const d = landmarks[8];
+    const segmentsCross = (ccw(a, b, c) !== ccw(a, b, d)) && (ccw(c, d, a) !== ccw(c, d, b));
+    return segmentsCross;
 }

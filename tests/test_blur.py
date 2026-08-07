@@ -80,11 +80,12 @@ def middle_finger_hand():
 
 
 def finger_heart_hand():
-    """True crossed heart: thumb-tip left of PIP, index-tip right of PIP, tips pinched."""
+    """True crossed heart: thumb and index shafts anti-parallel (form an X)."""
     return make_hand({
-        THUMB_T: (0.28, -0.42),
-        INDEX_PIP: (0.27, 0.00),
-        INDEX_T: (0.22, -0.42),
+        3: (0.05, -0.10),
+        THUMB_T: (0.40, -0.45),
+        INDEX_PIP: (0.40, -0.30),
+        INDEX_T: (0.05, -0.55),
         MIDDLE_MCP: (0.30, 0.30),
         MIDDLE_PIP: (0.30, -0.10),
         MIDDLE_T: (0.25, 0.00),
