@@ -165,3 +165,43 @@ before this audit: commit `8d21dd3`.
   hand is an OPEN palm, and the wave is HORIZONTAL (x-dominant, >=2 reversals).
 - Removed the WAVING_TRAVEL_MIN single-swipe branch (one-way raises triggered
   the cat with zero reversals) and its now-dead constant.
+
+## FIX-36 — Refine isFingerHeart thresholds (false positive + false negative)
+
+**Date:** 2026-08-05
+**Commit:** `238a45b`
+**Files:** `static/gestures.js`, `blur.py`, `static/main.js`, `tests/gestures.test.mjs`, `templates/index.html`
+
+### Root cause
+
+`isFingerHeart` had three weak gates that let non-love poses (pistol /
+thumb-up) through while rejecting real finger hearts:
+
+1. **index/middle ratio 1.20** — a pointing hand easily exceeds this.
+2. **thumb-index distance 0.40 × palm** — far too generous; pistol hands
+   project thumb and index tip close together in 2D.
+3. **fold threshold 1.30** — middle finger could be nearly straight and
+   still pass.
+
+### Changes
+
+| Gate | Before | After | Direction |
+|------|--------|-------|-----------|
+| index/middle ratio | 1.20 | 1.15 | slightly easier for true hearts |
+| fold threshold | 1.30 | 1.45 | more tolerant of real hands |
+| thumb-index distance | 0.40 × palm | 0.25 × palm | much tighter — rejects non-pinches |
+| thumb Y tolerance (JS) | 0.15 × palm | kept | — |
+| thumb Y tolerance (Python) | 0.05 × palm | 0.15 × palm | loosened for tilted hands |
+| cache-bust version | v=7 | v=8 | force browser reload |
+
+Python `is_finger_heart` synced to match JS thresholds exactly.
+
+### Tests
+
+- Added `pistolHand()` fixture + assertion in `tests/gestures.test.mjs`.
+- All 9 JS + 11 Python tests pass.
+
+### Also in this commit
+
+- Removed orphan scubacat glossary card from `templates/index.html`
+  (leftover from FIX-34).
