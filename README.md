@@ -2,7 +2,7 @@
 
 Project iseng untuk hiburan: deteksi gestur tangan via webcam yang memicu
 efek lucu di layar — gesture **peace (✌️)** memblur wajah, dan gestur lain
-memunculkan emoji, mahkota, sampai kucing selam.
+memunculkan emoji dan mahkota.
 
 Semua deteksi berjalan di browser via MediaPipe (frame tidak dikirim ke
 mana-mana). Ada juga CLI Python/OpenCV sebagai fallback mandiri.
