@@ -379,9 +379,6 @@ function stopCamera() {
     // FIX-17: reset redundant-write guard
     lastAppliedPeace = null;
 
-    }
-        // FIX-21: pause without re-seeking to 133 so a later restart resumes from the loop point naturally
-    }
 
     // Clear canvas with black fill and remove CSS blur filter
     ctx.fillStyle = '#000000';
@@ -1054,10 +1051,7 @@ function updateFingerUI(id, extended) {
     }
 }
 
-    }
-});
 
-}
 
 // Native HTML5 Audio Player integration
 const audio = document.getElementById('audio-player');
