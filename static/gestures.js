@@ -44,28 +44,33 @@ export function isMiddleFinger(landmarks) {
 }
 
 /**
- * Korean finger heart 🫰: index up, middle+ring folded, thumb tip close to index tip.
+ * Korean finger heart: index extended well beyond middle (ratio >= 1.25),
+ * middle+ring+pinky folded, thumb tip close to index tip (< 0.40 palm).
+ * The index/middle ratio is the KEY discriminator: a fist has ratio ~1.0
+ * because all fingertips reach similar distances from wrist.
  */
 export function isFingerHeart(landmarks) {
     const wrist = landmarks[0];
-    const palmSize = getDistance(landmarks[0], landmarks[9]); // Wrist to middle MCP
+    const palmSize = getDistance(landmarks[0], landmarks[9]);
     if (palmSize < 0.01) return false;
 
-    // Index must be fully extended and straight (at least 1.15x PIP distance from wrist)
-    const indexUp = getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist) * 1.15;
+    // KEY DISCRIMINATOR: index must reach WELL beyond middle finger.
+    // In a finger heart index is fully extended while middle is folded.
+    // In a fist all fingertips have similar reach, ratio stays ~1.0.
+    const indexDist  = getDistance(landmarks[8], wrist);
+    const middleDist = getDistance(landmarks[12], wrist);
+    if (middleDist < 0.01) return false;
+    if (indexDist / middleDist < 1.25) return false;
 
-    // Middle and ring must be folded (1.10x — strict enough to reject a relaxed
-    // open hand but tolerant of real-hand landmark noise).
-    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.10;
-    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.10;
+    // Middle, ring, pinky must be folded (1.15x � tolerant of real-hand noise)
+    const middleFolded = getDistance(landmarks[12], wrist) < getDistance(landmarks[10], wrist) * 1.15;
+    const ringFolded   = getDistance(landmarks[16], wrist) < getDistance(landmarks[14], wrist) * 1.15;
+    const pinkyFolded  = getDistance(landmarks[20], wrist) < getDistance(landmarks[18], wrist) * 1.15;
+    if (!middleFolded || !ringFolded || !pinkyFolded) return false;
 
-    if (!middleFolded || !ringFolded) return false;
-
-    // Thumb tip (4) and index tip (8) must be PINCHED tight — an actual kiss, not a
-    // relaxed adjacency. 0.55*palm still lets a natural hand read as a heart in
-    // MediaPipe's normalized coords; 0.30 requires deliberate contact.
+    // Thumb tip and index tip must be PINCHED tight
     const distThumbIndex = getDistance(landmarks[4], landmarks[8]);
-    if (distThumbIndex > palmSize * 0.30) return false;
+    if (distThumbIndex > palmSize * 0.40) return false;
 
     return true;
 }
