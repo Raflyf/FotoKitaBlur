@@ -135,6 +135,34 @@ class TestOtherGestures(unittest.TestCase):
     def test_peace_not_finger_heart(self):
         self.assertIs(PeaceBlurDetector.is_finger_heart(peace_hand()), False)
 
+    def test_two_hand_heart_detected(self):
+        left_hand = make_hand({
+            MIDDLE_MCP: (0.20, 0.30),
+            INDEX_T: (0.48, -0.40),
+            THUMB_T: (0.48, -0.20),
+        })
+        right_hand = make_hand({
+            MIDDLE_MCP: (0.80, 0.30),
+            INDEX_T: (0.52, -0.40),
+            THUMB_T: (0.52, -0.20),
+        })
+        res = PeaceBlurDetector.is_two_hand_heart(left_hand, right_hand)
+        self.assertIsNotNone(res)
+        self.assertIn("x", res)
+
+    def test_two_hand_heart_rejected_far(self):
+        left_hand = make_hand({
+            MIDDLE_MCP: (0.20, 0.30),
+            INDEX_T: (0.10, -0.40),
+            THUMB_T: (0.10, -0.20),
+        })
+        right_hand = make_hand({
+            MIDDLE_MCP: (0.80, 0.30),
+            INDEX_T: (0.90, -0.40),
+            THUMB_T: (0.90, -0.20),
+        })
+        self.assertIsNone(PeaceBlurDetector.is_two_hand_heart(left_hand, right_hand))
+
 
 if __name__ == "__main__":
     unittest.main()

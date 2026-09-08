@@ -27,9 +27,36 @@ def get_distance(p1, p2):
     return math.hypot(p1.x - p2.x, p1.y - p2.y)
 
 
-def is_finger_extended(tip, pip, landmarks):
+def is_finger_extended(landmarks, mcp_idx, pip_idx, tip_idx):
     wrist = landmarks[0]
-    return get_distance(landmarks[tip], wrist) > get_distance(landmarks[pip], wrist)
+    mcp = landmarks[mcp_idx]
+    pip = landmarks[pip_idx]
+    tip = landmarks[tip_idx]
+
+    dist_tip_wrist = get_distance(tip, wrist)
+    dist_pip_wrist = get_distance(pip, wrist)
+    dist_tip_mcp = get_distance(tip, mcp)
+    dist_pip_mcp = get_distance(pip, mcp)
+
+    return (dist_tip_mcp > dist_pip_mcp * 1.15) and (dist_tip_wrist > dist_pip_wrist * 1.08)
+
+
+def is_finger_folded(landmarks, mcp_idx, pip_idx, tip_idx):
+    wrist = landmarks[0]
+    mcp = landmarks[mcp_idx]
+    pip = landmarks[pip_idx]
+    tip = landmarks[tip_idx]
+
+    dist_tip_wrist = get_distance(tip, wrist)
+    dist_pip_wrist = get_distance(pip, wrist)
+    dist_tip_mcp = get_distance(tip, mcp)
+    dist_pip_mcp = get_distance(pip, mcp)
+
+    return (dist_tip_wrist <= dist_pip_wrist * 1.06) or (dist_tip_mcp <= dist_pip_mcp * 1.25)
+
+
+def ccw(A, B, C):
+    return (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x)
 
 
 class PeaceBlurDetector:
@@ -59,66 +86,100 @@ class PeaceBlurDetector:
 
     @staticmethod
     def is_peace(landmarks):
-        """Strict peace sign: index+middle up, ring+pinky folded, V-spread, thumb tucked.
-
-        Mirrors the frontend's isPeace() heuristics (main.js).
-        """
         wrist = landmarks[0]
-        palm_size = get_distance(landmarks[LANDMARKS["wrist"]], landmarks[LANDMARKS["middle_mcp"]])
-        if palm_size < 0.01:
+        palm_size = get_distance(landmarks[0], landmarks[9])
+        if palm_size < 0.015:
             return False
 
-        index_up = get_distance(landmarks[LANDMARKS["index_tip"]], wrist) > get_distance(landmarks[LANDMARKS["index_pip"]], wrist) * 1.15
-        middle_up = get_distance(landmarks[LANDMARKS["middle_tip"]], wrist) > get_distance(landmarks[LANDMARKS["middle_pip"]], wrist) * 1.15
-        ring_folded = get_distance(landmarks[LANDMARKS["ring_tip"]], wrist) < get_distance(landmarks[LANDMARKS["ring_pip"]], wrist) * 0.85
-        pinky_folded = get_distance(landmarks[LANDMARKS["pinky_tip"]], wrist) < get_distance(landmarks[LANDMARKS["pinky_pip"]], wrist) * 0.85
-        fingers_spread = get_distance(landmarks[LANDMARKS["index_tip"]], landmarks[LANDMARKS["middle_tip"]]) > palm_size * 0.32
-        thumb_folded = get_distance(landmarks[LANDMARKS["thumb_tip"]], wrist) < palm_size * 1.1
+        index_up = is_finger_extended(landmarks, 5, 6, 8)
+        middle_up = is_finger_extended(landmarks, 9, 10, 12)
+        ring_folded = is_finger_folded(landmarks, 13, 14, 16)
+        pinky_folded = is_finger_folded(landmarks, 17, 18, 20)
 
-        return index_up and middle_up and ring_folded and pinky_folded and fingers_spread and thumb_folded
+        if not (index_up and middle_up and ring_folded and pinky_folded):
+            return False
+
+        finger_sep = get_distance(landmarks[8], landmarks[12])
+        if finger_sep < palm_size * 0.18:
+            return False
+
+        thumb_dist = get_distance(landmarks[4], wrist)
+        if thumb_dist > palm_size * 1.45 and thumb_dist > get_distance(landmarks[8], wrist) * 0.9:
+            return False
+
+        return True
 
     @staticmethod
     def is_middle_finger(landmarks):
         wrist = landmarks[0]
         palm_size = get_distance(landmarks[0], landmarks[9])
-        if palm_size < 0.01:
+        if palm_size < 0.015:
             return False
-        middle_up = get_distance(landmarks[12], wrist) > get_distance(landmarks[10], wrist) * 1.12
-        index_folded = get_distance(landmarks[8], wrist) < get_distance(landmarks[6], wrist) * 1.05
-        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.05
-        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.05
-        return middle_up and index_folded and ring_folded and pinky_folded
+
+        middle_up = is_finger_extended(landmarks, 9, 10, 12)
+        index_folded = is_finger_folded(landmarks, 5, 6, 8)
+        ring_folded = is_finger_folded(landmarks, 13, 14, 16)
+        pinky_folded = is_finger_folded(landmarks, 17, 18, 20)
+
+        middle_reach = get_distance(landmarks[12], wrist)
+        index_reach = get_distance(landmarks[8], wrist)
+
+        return middle_up and index_folded and ring_folded and pinky_folded and (middle_reach > index_reach * 1.15)
 
     @staticmethod
     def is_finger_heart(landmarks):
-        """Korean finger heart: folded fingers plus thumb/index shaft intersection."""
         wrist = landmarks[0]
         palm_size = get_distance(landmarks[0], landmarks[9])
-        if palm_size < 0.01:
+        if palm_size < 0.015:
             return False
+
+        middle_folded = is_finger_folded(landmarks, 9, 10, 12)
+        ring_folded = is_finger_folded(landmarks, 13, 14, 16)
+        pinky_folded = is_finger_folded(landmarks, 17, 18, 20)
+
+        if not (middle_folded and ring_folded and pinky_folded):
+            return False
+
         index_dist = get_distance(landmarks[8], wrist)
         middle_dist = get_distance(landmarks[12], wrist)
-        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.15:
+        if middle_dist < 0.01 or (index_dist / middle_dist) < 1.12:
             return False
-        middle_folded = get_distance(landmarks[12], wrist) < get_distance(landmarks[10], wrist) * 1.65
-        ring_folded = get_distance(landmarks[16], wrist) < get_distance(landmarks[14], wrist) * 1.65
-        pinky_folded = get_distance(landmarks[20], wrist) < get_distance(landmarks[18], wrist) * 1.65
-        if not middle_folded or not ring_folded or not pinky_folded:
-            return False
-        # Thumb must be ABOVE the index PIP (palm-camera coords). In a fist the
-        # thumb sits behind/below the index finger.
+
         if landmarks[4].y > landmarks[6].y + palm_size * 0.15:
             return False
-        def ccw(A, B, C):
-            return (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x)
 
-        p1, p2 = landmarks[3], landmarks[4]
-        q1, q2 = landmarks[6], landmarks[8]
-        intersect = (ccw(p1, p2, q1) != ccw(p1, p2, q2)) and (ccw(q1, q2, p1) != ccw(q1, q2, p2))
-        if not intersect:
-            return False
+        a = landmarks[3]
+        b = landmarks[4]
+        c = landmarks[6]
+        d = landmarks[8]
 
-        return True
+        segments_cross = (ccw(a, b, c) != ccw(a, b, d)) and (ccw(c, d, a) != ccw(c, d, b))
+        return segments_cross
+
+    @staticmethod
+    def is_two_hand_heart(l1, l2):
+        if not l1 or not l2:
+            return None
+
+        palm1 = get_distance(l1[0], l1[9])
+        palm2 = get_distance(l2[0], l2[9])
+        avg_palm = (palm1 + palm2) / 2.0
+        if avg_palm < 0.015:
+            return None
+
+        dist_index = get_distance(l1[8], l2[8])
+        dist_thumb = get_distance(l1[4], l2[4])
+
+        if dist_index < avg_palm * 0.65 and dist_thumb < avg_palm * 0.65:
+            index_y = (l1[8].y + l2[8].y) / 2.0
+            thumb_y = (l1[4].y + l2[4].y) / 2.0
+
+            if index_y <= thumb_y + avg_palm * 0.25:
+                return {
+                    "x": (l1[8].x + l2[8].x + l1[4].x + l2[4].x) / 4.0,
+                    "y": (l1[8].y + l2[8].y + l1[4].y + l2[4].y) / 4.0
+                }
+        return None
 
     def process_frame(self, frame, blur_kernel_size=None):
         """Detect the peace sign on a (non-flipped) BGR frame.

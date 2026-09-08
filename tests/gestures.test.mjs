@@ -3,7 +3,7 @@
 // Run: node --test tests/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPeace, isMiddleFinger, isFingerHeart } from "../static/gestures.js";
+import { isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart } from "../static/gestures.js";
 
 // Landmark ids used by gestures.js (MediaPipe hand map)
 const THUMB_T = 4, INDEX_PIP = 6, INDEX_T = 8, MIDDLE_MCP = 9,
@@ -99,3 +99,33 @@ function nearTouchHand() {
 }
 test("near touch not finger heart", () => assert.equal(isFingerHeart(nearTouchHand()), false));
 test("peace not finger heart", () => assert.equal(isFingerHeart(peaceHand()), false));
+
+test("two hand heart detected when index and thumb tips meet", () => {
+    const leftHand = makeHand({
+        [MIDDLE_MCP]: [0.20, 0.30],
+        8: [0.48, -0.40], // Left index tip
+        4: [0.48, -0.20], // Left thumb tip
+    });
+    const rightHand = makeHand({
+        [MIDDLE_MCP]: [0.80, 0.30],
+        8: [0.52, -0.40], // Right index tip
+        4: [0.52, -0.20], // Right thumb tip
+    });
+    const result = isTwoHandHeart(leftHand, rightHand);
+    assert.ok(result !== null);
+    assert.ok(typeof result.x === "number");
+});
+
+test("two hand heart rejected when tips are far apart", () => {
+    const leftHand = makeHand({
+        [MIDDLE_MCP]: [0.20, 0.30],
+        8: [0.10, -0.40],
+        4: [0.10, -0.20],
+    });
+    const rightHand = makeHand({
+        [MIDDLE_MCP]: [0.80, 0.30],
+        8: [0.90, -0.40],
+        4: [0.90, -0.20],
+    });
+    assert.equal(isTwoHandHeart(leftHand, rightHand), null);
+});

@@ -1,59 +1,59 @@
+// Foto Kita Blur - Real-time AI Vision & Gesture Processing Engine
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart } from "./gestures.js?v=11";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended } from "./gestures.js?v=2";
+import { Particle, draw3DCrown } from "./particles.js?v=2";
 
-let handLandmarker;
-let faceDetector;
-let isModelLoaded = false;
+// Global Vision Models & State
+let handLandmarker = null;
+let faceDetector = null;
+let isModelReady = false;
 let isCameraActive = false;
-let localStream = null;
-let animationFrameId = null;
+let mediaStream = null;
+let animFrameId = null;
 
-// Face & Crown tracking state
-let crownAngle = 0;
-let lastHeartState = false;
-let lastCheekyState = false;
+// Audio Controllers
+const musicAudio = document.getElementById('audio-player');
+const kicauAudio = document.getElementById('kicau-player');
+let isMusicPlaying = false;
 
-let lastFaceResults = null;
-let faceDetectCounter = 0;
-let detectionTimeoutId = null;
+// DOM Elements Cache
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('output-canvas');
+const ctx = canvas.getContext('2d', { powerPreference: 'high-performance', alpha: false });
 
-// FIX-04: per-face tracking with stable IDs and EMA smoothing
-let faceTracks = [];        // [{ id, headX, headY, headWidth, headHeight, isCheeky, missedFrames }]
-let nextFaceId = 0;
-const TRACK_KEEP_FRAMES = 4;   // keep a track alive for this many missed detections before retiring
-const FACE_EMA_ALPHA = 0.4;    // new-observation weight: pos = pos + (new - pos) * ALPHA
+const btnToggle = document.getElementById('btn-toggle');
+const btnMusic = document.getElementById('btn-music');
+const btnGlossary = document.getElementById('btn-glossary');
+const btnGlossaryClose = document.getElementById('btn-glossary-close');
+const glossaryPanel = document.getElementById('glossary-panel');
 
-// FIX-06 & FIX-12: cache last two detection snapshots to interpolate between detections
-let prevSnapshot = null;
-let currSnapshot = null;       // { time, crowns, spawns, cheekySpawns }
+const statusBadge = document.getElementById('status-badge');
+const statusText = document.getElementById('status-text');
+const loadingPlaceholder = document.getElementById('loading-placeholder');
+const loadingText = document.getElementById('loading-text');
 
-// FIX-02: temporal hysteresis (latch) for the peace/blur gesture
-const PEACE_HOLD_DURATION = 4; // hold blur for N extra detection frames after last positive detection
-let peaceHoldTimer = 0;
+const hudStatus = document.getElementById('hud-status');
+const hudFps = document.getElementById('hud-fps');
+const catVideoEl = document.getElementById('cat-video');
 
-// FIX-16: framerate-independent crown rotation
-let lastCrownTime = performance.now();
-const CROWN_ANGULAR_SPEED = 2.4; // radians per second (== 0.04/frame at 60fps)
+const blurInput = document.getElementById('input-blur');
+const blurLabel = document.getElementById('label-blur');
+const confInput = document.getElementById('input-conf');
+const confLabel = document.getElementById('label-conf');
 
-let showSkeleton = false;
-let lastHandLandmarks = [];
+const checkSkeleton = document.getElementById('check-skeleton');
+const checkCrown = document.getElementById('check-crown');
+const checkCheeky = document.getElementById('check-cheeky');
 
-// FIX-05: lightweight hand tracker (nearest-wrist match) for stable hand identity
-let prevHands = [];          // [{ id, x, y }]
-let nextHandId = 0;
-const HAND_MATCH_GATE = 0.3; // normalized max distance to re-identify a hand between frames
+const fingerEls = {
+    thumb: document.getElementById('finger-thumb')?.querySelector('.finger-status'),
+    index: document.getElementById('finger-index')?.querySelector('.finger-status'),
+    middle: document.getElementById('finger-middle')?.querySelector('.finger-status'),
+    ring: document.getElementById('finger-ring')?.querySelector('.finger-status'),
+    pinky: document.getElementById('finger-pinky')?.querySelector('.finger-status'),
+};
 
-const FACE_MATCH_GATE = 0.4;     // normalized centroid distance to re-identify a face track
-
-// FIX-11: gesture-to-face assignment gate. Nearest-face assignment + one-gesture-per-face
-// exclusivity (below) fix the duplicate-spawn issue; the gate just needs to be wide enough
-// for the middle-finger/cheeky gesture (hand often away from the face) while not so wide that
-// a gesture matches an unrelated face. 0.45 is a middle ground (old value was 0.6).
-const GESTURE_FACE_GATE = 0.45;
-
-// FIX-02: whole-frame blur state (hysteresis-latched peace/blur)
-let effectivePeace = false;      // hysteresis-latched peace/blur state
-
+// Hand Connections for Skeleton Rendering
 const HAND_CONNECTIONS = [
     [0, 1], [1, 2], [2, 3], [3, 4],         // Thumb
     [0, 5], [5, 6], [6, 7], [7, 8],         // Index
@@ -63,1116 +63,755 @@ const HAND_CONNECTIONS = [
     [5, 9], [9, 13], [13, 17]               // Palm base
 ];
 
-const video = document.getElementById('webcam');
-const canvas = document.getElementById('output-canvas');
+// Persistent Face Tracking
+let faceTracks = []; // [{ id, x, y, w, h, missedFrames }]
+let nextFaceId = 0;
+const FACE_EMA = 0.35; // Smoothing factor
 
-// Request high-performance (discrete) GPU for Canvas2D rendering.
-// This signals the browser/OS to prefer the dedicated GPU (e.g. RTX 3050) over integrated graphics.
-const ctx = canvas.getContext('2d', {
-    powerPreference: 'high-performance',
-    alpha: false
-});
+// Particles & Animations
+let activeParticles = [];
+let crownAngle = 0;
+let lastCrownTime = performance.now();
+const CROWN_ANGULAR_SPEED = 2.4; // radians per sec
 
-const btnToggle = document.getElementById('btn-toggle');
-const statusBadge = document.getElementById('status-badge');
-const statusText = document.getElementById('status-text');
-const loadingPlaceholder = document.getElementById('loading-placeholder');
-const loadingText = document.getElementById('loading-text');
+// Gesture Hold & Hysteresis Timers (Anti-Flicker / Anti-Miss)
+const HOLD_FRAMES = 8; // ~250ms hold on drop
+let peaceHoldTimer = 0;
+let scubacatHoldTimer = 0;
+let lastAppliedBlur = false;
 
-const IS_MOBILE = /Mobi|Android/i.test(navigator.userAgent);
+// Scuba Cat / Waving Integrator
+let wavingEnergy = 0;
+let handMovementHistories = new Map(); // handId -> { lastX, lastDir, reversals, sinceChange }
 
-// FIX-17: cache control DOM references once instead of querying every frame
-const blurInput = document.getElementById('input-blur');
-const blurLabel = document.getElementById('label-blur');
-const skeletonCheckbox = document.getElementById('check-skeleton');
-const crownCheckbox = document.getElementById('check-crown');
-const cheekyCheckbox = document.getElementById('check-cheeky');
-const btnGlossary = document.getElementById('btn-glossary');
-const glossaryPanel = document.getElementById('glossary-panel');
-const btnGlossaryClose = document.getElementById('btn-glossary-close');
-const confInput = document.getElementById('input-conf');
-const confLabel = document.getElementById('label-conf');
-const fingerPanel = document.getElementById('finger-panel');
-const btnMusic = document.getElementById('btn-music');
+// FPS Tracking
+let fpsCounter = 0;
+let lastFpsTime = performance.now();
+let displayFps = 0;
 
-// Finger diagnostics elements are cached once at startup (they are mutated at
-// detection rate, so per-call querySelector was a measurable hot spot).
-const fingerStatusEls = {};
-(function cacheFingerUI() {
-    for (const id of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
-        fingerStatusEls[id] = document.querySelector(`#finger-${id} .finger-status`);
-    }
-})();
-
-let lastAppliedPeace = null; // FIX-17: avoid redundant canvas.style.filter writes
-
-// Initialize MediaPipe models
-async function initializeModel() {
+// ==========================================
+// 1. INITIALIZE AI MODELS
+// ==========================================
+async function initVisionModels() {
     try {
-        const vision = await FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-        );
-        
-        // Initialize Hand Landmarker
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: {
-                modelAssetPath: "/static/models/hand_landmarker.task",
-                delegate: "GPU"
-            },
-            runningMode: "video",
-            numHands: 6 // Set to 6 hands to support multiple people simultaneously
-        });
+        if (loadingText) loadingText.textContent = "Mengunduh MediaPipe Tasks Vision...";
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
 
-        // Initialize Face Detector — configured to detect multiple faces simultaneously
-        faceDetector = await FaceDetector.createFromOptions(vision, {
-            baseOptions: {
-                modelAssetPath: "/static/models/blaze_face_short_range.tflite",
-                delegate: "GPU"
-            },
-            runningMode: "video",
-            minDetectionConfidence: 0.4,    // Lower threshold to catch partially visible faces
-            minSuppressionThreshold: 0.5,   // FIX-03: higher NMS threshold retains overlapping faces (lower values suppress them)
-            numFaces: 6                     // Allow up to 6 simultaneous faces
-        });
+        if (loadingText) loadingText.textContent = "Memuat Model Hand Landmarker & Face Detector...";
         
-        isModelLoaded = true;
-        loadingPlaceholder.style.display = 'none';
+        const confVal = (parseInt(confInput.value) || 50) / 100;
+
+        // Load Hand Landmarker with GPU acceleration
+        try {
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "/static/models/hand_landmarker.task",
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 2,
+                minHandDetectionConfidence: confVal,
+                minTrackingConfidence: confVal
+            });
+        } catch (gpuErr) {
+            console.warn("GPU delegate unavailable for HandLandmarker, falling back to CPU:", gpuErr);
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "/static/models/hand_landmarker.task",
+                    delegate: "CPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 2,
+                minHandDetectionConfidence: confVal,
+                minTrackingConfidence: confVal
+            });
+        }
+
+        // Load Face Detector with GPU acceleration
+        try {
+            faceDetector = await FaceDetector.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "/static/models/blaze_face_short_range.tflite",
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                minDetectionConfidence: 0.45
+            });
+        } catch (gpuErr) {
+            console.warn("GPU delegate unavailable for FaceDetector, falling back to CPU:", gpuErr);
+            faceDetector = await FaceDetector.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "/static/models/blaze_face_short_range.tflite",
+                    delegate: "CPU"
+                },
+                runningMode: "VIDEO",
+                minDetectionConfidence: 0.45
+            });
+        }
+
+        isModelReady = true;
+        if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
+
+        if (statusBadge && statusText) {
+            statusBadge.className = 'status-badge ready';
+            statusText.textContent = 'Model Siap';
+        }
+
         btnToggle.disabled = false;
-        btnToggle.textContent = 'Start Camera';
-        statusText.textContent = 'Ready';
+        btnToggle.textContent = 'Nyalakan Kamera';
+        btnToggle.className = 'btn btn-flex btn-primary';
+
     } catch (err) {
-        console.error("Failed to load MediaPipe models:", err);
-        loadingText.textContent = "Failed to load models. Check internet connection.";
+        console.error("Gagal memuat model vision:", err);
+        if (loadingText) loadingText.textContent = "Gagal memuat model AI. Periksa koneksi internet.";
+        if (statusText) statusText.textContent = "Error AI";
     }
 }
 
-// Run model initialization
-initializeModel();
-
-// GPU Acceleration: Offscreen Canvas Cache for emojis (prevents slow CPU text rasterization drop-frames)
-// FIX-22: cache is bounded with an LRU eviction policy and coarser size quantization to limit memory.
-const EMOJI_CACHE_MAX = 64;        // maximum number of cached emoji canvases
-const EMOJI_SIZE_STEP = 8;         // quantize sizes to nearest 8px to collapse near-duplicate entries
-const emojiCache = new Map();      // key -> canvas; insertion order used as LRU (oldest first)
-function getEmojiCanvas(emoji, size) {
-    // FIX-22: quantize to a coarser step so visually-identical sizes share one canvas
-    const roundedSize = Math.max(1, Math.round(size / EMOJI_SIZE_STEP) * EMOJI_SIZE_STEP);
-    const key = `${emoji}-${roundedSize}`;
-    if (emojiCache.has(key)) {
-        // FIX-22: move-to-end to mark as most-recently-used
-        const cached = emojiCache.get(key);
-        emojiCache.delete(key);
-        emojiCache.set(key, cached);
-        return cached;
-    }
-    const offscreen = document.createElement('canvas');
-    const pad = Math.ceil(roundedSize * 0.4);
-    const width = roundedSize + pad * 2;
-    const height = roundedSize + pad * 2;
-    offscreen.width = width;
-    offscreen.height = height;
-    
-    const oCtx = offscreen.getContext('2d');
-    oCtx.font = `${roundedSize}px sans-serif`;
-    oCtx.textBaseline = 'middle';
-    oCtx.textAlign = 'center';
-    
-    // Add subtle drop-shadow glow to hearts
-    oCtx.shadowColor = 'rgba(255, 105, 180, 0.8)';
-    oCtx.shadowBlur = Math.round(roundedSize * 0.2);
-    
-    oCtx.fillText(emoji, width / 2, height / 2);
-    // FIX-22: enforce LRU cap by evicting the oldest entry (first key in insertion order)
-    if (emojiCache.size >= EMOJI_CACHE_MAX) {
-        const oldestKey = emojiCache.keys().next().value;
-        emojiCache.delete(oldestKey);
-    }
-    emojiCache.set(key, offscreen);
-    return offscreen;
-}
-
-class HeartParticle {
-    constructor(x, y, emojis = ['❤️', '💖', '💝', '💕', '💗', '💓', '💘']) {
-        this.x = x;
-        this.y = y;
-        this.size = Math.random() * 24 + 20; // Size (20px to 44px)
-        this.opacity = 1.0;
-        this.vx = (Math.random() - 0.5) * 3; // Float side-to-side
-        this.vy = -(Math.random() * 3 + 3);  // Float upwards
-        this.emoji = emojis[Math.floor(Math.random() * emojis.length)];
-        this.rotation = (Math.random() - 0.5) * 0.4;
-    }
-
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.opacity -= 0.015;
-    }
-
-    draw(ctx) {
-        ctx.save();
-        ctx.globalAlpha = this.opacity;
-        
-        // Draw pre-rendered emoji canvas using GPU-accelerated drawImage
-        const img = getEmojiCanvas(this.emoji, this.size);
-        ctx.translate(this.x, this.y);
-        ctx.rotate(this.rotation);
-        ctx.drawImage(img, -img.width / 2, -img.height / 2);
-        ctx.restore();
-    }
-}
-
-let particles = [];
-let heartSpawnCooldown = 0;
-let cheekySpawnCooldown = 0;
-let ambientSpawnCooldown = 0;
-
-// Hysteresis: once triggered, stay active for N extra detection frames to bridge brief drops
-const HEART_HOLD_DURATION = 3; // number of frames to hold after last positive detection
-// FIX-05: keyed by stable hand-tracking ID (not array index) so timers survive reordering
-const heartHoldTimers = new Map(); // key: hand track id, value: frames remaining
-
-// FIX-23: latch for the two-hand classic heart. Hand pairs have no stable ID, so use one
-// shared timer + a snapshot of the last positive index-tip positions.
-const TWO_HAND_HEART_HOLD = 3;
-let twoHandHeartTimer = 0;
-let twoHandHeartPos = null; // [{x, y}, {x, y}] index tips at last positive detection
-
-const CHEEKY_HOLD_DURATION = 3;
-// FIX-05: keyed by stable hand-tracking ID (not array index)
-const cheekyHoldTimers = new Map(); // key: hand track id, value: frames remaining
-
-// FIX-05: lightweight hand tracker. Matches each detected hand to the nearest previous wrist
-// (normalized coords) within HAND_MATCH_GATE, reusing its ID; unmatched hands get a new ID.
-// Returns an array of { id, landmarks } aligned 1:1 with the input landmarks array.
-function trackHands(landmarksList) {
-    const used = new Array(prevHands.length).fill(false);
-    const assignments = new Array(landmarksList.length).fill(null);
-
-    for (let i = 0; i < landmarksList.length; i++) {
-        const wrist = landmarksList[i][0];
-        let bestIdx = -1;
-        let bestDist = Infinity;
-        for (let j = 0; j < prevHands.length; j++) {
-            if (used[j]) continue;
-            const d = getDistance(wrist, prevHands[j]);
-            if (d < bestDist) {
-                bestDist = d;
-                bestIdx = j;
-            }
-        }
-        if (bestIdx !== -1 && bestDist < HAND_MATCH_GATE) {
-            used[bestIdx] = true;
-            assignments[i] = prevHands[bestIdx].id;
-        }
-    }
-
-    const nextPrev = [];
-    for (let i = 0; i < landmarksList.length; i++) {
-        const wrist = landmarksList[i][0];
-        let id = assignments[i];
-        if (id === null) {
-            id = nextHandId++;
-        }
-        nextPrev.push({ id, x: wrist.x, y: wrist.y });
-        assignments[i] = { id, landmarks: landmarksList[i] };
-    }
-    prevHands = nextPrev;
-    return assignments; // [{ id, landmarks }, ...]
-}
-
-
-// Gesture predicates (isPeace / isMiddleFinger / isFingerHeart / getDistance)
-// live in ./gestures.js so the browser and the Node test suite share one source.
-
-// Toggle client-side camera capture
+// ==========================================
+// 2. CAMERA MANAGEMENT
+// ==========================================
 async function toggleCamera() {
-    if (!isModelLoaded) return;
-
     if (isCameraActive) {
-        // Stop camera
         stopCamera();
     } else {
-        // Start camera
-        try {
-            btnToggle.disabled = true;
-            btnToggle.textContent = 'Initializing Camera...';
+        await startCamera();
+    }
+}
 
-            // Show placeholder with starting message
-            loadingPlaceholder.style.display = 'flex';
-            loadingText.textContent = 'Starting camera...';
-            const spinner = loadingPlaceholder.querySelector('.spinner');
-            if (spinner) spinner.style.display = 'block';
+async function startCamera() {
+    if (!isModelReady) return;
 
-            // FIX-27: cap native resolution. The canvas is clamped to 800px wide anyway, so
-            // requesting 1080p just wastes decode/GPU on the convolutions and MediaPipe runs.
-            localStream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    facingMode: "user"
-                },
-                audio: false
-            });
+    btnToggle.disabled = true;
+    btnToggle.textContent = 'Menghubungkan Kamera...';
 
-            video.srcObject = localStream;
-            video.removeEventListener('loadeddata', startDetectionLoop); // Remove pending listener if user spammed stop/start
-            video.addEventListener('loadeddata', startDetectionLoop, { once: true });
-            isCameraActive = true;
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'user'
+            },
+            audio: false
+        });
 
-            // FIX-17: use cached finger-panel reference
-            if (fingerPanel) fingerPanel.style.display = 'flex';
+        mediaStream = stream;
+        video.srcObject = stream;
 
-            btnToggle.disabled = false;
-            btnToggle.textContent = 'Stop Camera';
-            btnToggle.className = 'btn btn-danger';
-            statusBadge.className = 'status-badge active';
-            statusText.textContent = 'Active';
-        } catch (err) {
-            console.error("Camera access failed:", err);
-            alert("Could not access camera. Please allow camera permissions.");
-            btnToggle.disabled = false;
-            btnToggle.textContent = 'Start Camera';
-            loadingPlaceholder.style.display = 'none';
+        await new Promise((resolve) => {
+            video.onloadedmetadata = () => {
+                video.play();
+                resolve();
+            };
+        });
+
+        // Set matching resolution for high-performance canvas
+        const maxWidth = 960;
+        let w = video.videoWidth || 640;
+        let h = video.videoHeight || 480;
+        if (w > maxWidth) {
+            const scale = maxWidth / w;
+            w = maxWidth;
+            h = Math.round(h * scale);
         }
+        canvas.width = w;
+        canvas.height = h;
+
+        isCameraActive = true;
+        btnToggle.disabled = false;
+        btnToggle.textContent = 'Matikan Kamera';
+        btnToggle.className = 'btn btn-flex btn-primary btn-active-danger';
+
+        if (statusBadge && statusText) {
+            statusBadge.className = 'status-badge active';
+            statusText.textContent = 'Kamera Aktif';
+        }
+        if (hudStatus) hudStatus.textContent = 'Memindai Gestur...';
+
+        // Start High-FPS Detection Loop
+        lastCrownTime = performance.now();
+        lastFpsTime = performance.now();
+        fpsCounter = 0;
+        processNextFrame();
+
+    } catch (err) {
+        console.error("Gagal membuka kamera:", err);
+        alert("Tidak dapat mengakses kamera. Pastikan izin kamera telah diberikan.");
+        btnToggle.disabled = false;
+        btnToggle.textContent = 'Nyalakan Kamera';
+        btnToggle.className = 'btn btn-flex btn-primary';
     }
 }
 
 function stopCamera() {
-    if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-        animationFrameId = null;
+    if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
     }
-    if (detectionTimeoutId) {
-        clearTimeout(detectionTimeoutId);
-        detectionTimeoutId = null;
-    }
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        localStream = null;
+
+    if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
     }
     video.srcObject = null;
     isCameraActive = false;
-    isDetecting = false; // Reset lock guard
-    video.removeEventListener('loadeddata', startDetectionLoop);
 
-    if (fingerPanel) fingerPanel.style.display = 'none';
-
-    lastHandLandmarks = [];
-
-    // FIX-21: reset face detection counter so mobile throttling restarts cleanly
-    faceDetectCounter = 0;
-    lastFaceResults = null;
-    // FIX-04: retire all face tracks so stale crowns don't linger after restart
-    faceTracks = [];
-    // FIX-06 & FIX-12: clear interpolation snapshots
-    prevSnapshot = null;
-    currSnapshot = null;
-    // FIX-02: reset peace hysteresis latch
+    // Reset Scuba Cat & Audio
+    if (catVideoEl) catVideoEl.style.display = 'none';
+    if (kicauAudio && !kicauAudio.paused) kicauAudio.pause();
+    scubacatHoldTimer = 0;
+    wavingEnergy = 0;
     peaceHoldTimer = 0;
-    // FIX-05: clear gesture hysteresis timers
-    heartHoldTimers.clear();
-    cheekyHoldTimers.clear();
-    // FIX-23: reset two-hand heart latch state
-    twoHandHeartTimer = 0;
-    twoHandHeartPos = null;
-    // FIX-17: reset redundant-write guard
-    lastAppliedPeace = null;
 
-
-    // Clear canvas with black fill and remove CSS blur filter
-    ctx.fillStyle = '#000000';
+    // Clear Canvas to Deep Black
+    ctx.save();
+    ctx.fillStyle = '#050507';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     canvas.style.filter = 'none';
+    lastAppliedBlur = false;
+    ctx.restore();
 
-    // Restore stopped camera placeholder message and hide spinner
-    loadingPlaceholder.style.display = 'flex';
-    loadingText.textContent = 'Camera is stopped. Click Start Camera to begin.';
-    const spinner = loadingPlaceholder.querySelector('.spinner');
-    if (spinner) spinner.style.display = 'none';
-
-    btnToggle.textContent = 'Start Camera';
-    btnToggle.className = 'btn';
-    statusBadge.className = 'status-badge';
-    statusText.textContent = 'Ready';
-}
-
-// Update confidence text label smoothly (triggered during drag)
-function updateConfidenceLabel() {
-    // FIX-17: use cached DOM reference
-    const val = confInput.value;
-    confLabel.textContent = val + '%';
-}
-
-// Apply configuration change to MediaPipe (triggered when slider is released)
-function applyConfidenceSetting() {
-    // FIX-17: use cached DOM reference
-    const val = confInput.value;
-    const conf = parseFloat(val) / 100;
-    if (handLandmarker) {
-        // FIX-14: update ALL hand confidence thresholds, not just detection.
-        // Tracking confidence is set slightly lower than detection so a hand already being
-        // tracked is kept alive across brief detection dips.
-        handLandmarker.setOptions({
-            minHandDetectionConfidence: conf,
-            minHandPresenceConfidence: conf,
-            minTrackingConfidence: Math.max(0, conf - 0.1)
-        });
+    btnToggle.textContent = 'Nyalakan Kamera';
+    btnToggle.className = 'btn btn-flex btn-primary';
+    if (statusBadge && statusText) {
+        statusBadge.className = 'status-badge ready';
+        statusText.textContent = 'Kamera Dimatikan';
     }
+    if (hudStatus) hudStatus.textContent = 'Kamera Nonaktif';
+    if (hudFps) hudFps.textContent = 'FPS: 0';
+
+    resetFingerUI();
 }
 
-// Main frame processing loop
-let lastVideoTime = -1;
-let isDetecting = false;
+// ==========================================
+// 3. SYNCHRONIZED VISION & RENDER LOOP
+// ==========================================
+function processNextFrame() {
+    if (!isCameraActive) return;
 
-// FIX-04: update face tracks from a fresh set of face detections.
-// Each detection is matched to the nearest existing track (by centroid distance, gated),
-// reusing its stable ID and EMA-smoothing its box. Unmatched detections spawn new tracks.
-// Tracks that miss detection for TRACK_KEEP_FRAMES are retired.
-function updateFaceTracks(detections, scaleX, scaleY) {
-    const used = new Array(faceTracks.length).fill(false);
-    const matched = new Array(detections.length).fill(null);
+    const now = performance.now();
 
-    for (let i = 0; i < detections.length; i++) {
-        const bbox = detections[i].boundingBox;
-        const cx = (bbox.originX + bbox.width / 2) / video.videoWidth;
-        const cy = (bbox.originY + bbox.height / 2) / video.videoHeight;
-        let bestIdx = -1;
-        let bestDist = Infinity;
-        for (let j = 0; j < faceTracks.length; j++) {
-            if (used[j]) continue;
-            const t = faceTracks[j];
-            const d = Math.hypot(t.normX - cx, t.normY - cy);
-            if (d < bestDist) {
-                bestDist = d;
-                bestIdx = j;
-            }
-        }
-        if (bestIdx !== -1 && bestDist < FACE_MATCH_GATE) {
-            used[bestIdx] = true;
-            matched[i] = bestIdx;
-        }
+    // Calculate real-time FPS
+    fpsCounter++;
+    if (now - lastFpsTime >= 1000) {
+        displayFps = Math.round((fpsCounter * 1000) / (now - lastFpsTime));
+        fpsCounter = 0;
+        lastFpsTime = now;
+        if (hudFps) hudFps.textContent = `FPS: ${displayFps}`;
     }
 
-    const nextTracks = [];
-    // Carry forward matched tracks with EMA smoothing
-    for (let i = 0; i < detections.length; i++) {
-        const bbox = detections[i].boundingBox;
-        const nx = (bbox.originX + bbox.width / 2) * scaleX;
-        const ny = bbox.originY * scaleY;
-        const nw = bbox.width * scaleX;
-        const nh = bbox.height * scaleY;
-        const normX = (bbox.originX + bbox.width / 2) / video.videoWidth;
-        const normY = (bbox.originY + bbox.height / 2) / video.videoHeight;
-        if (matched[i] !== null) {
-            const t = faceTracks[matched[i]];
-            // FIX-04: EMA smoothing — pos = pos + (new - pos) * ALPHA
-            t.headX = t.headX + (nx - t.headX) * FACE_EMA_ALPHA;
-            t.headY = t.headY + (ny - t.headY) * FACE_EMA_ALPHA;
-            t.headWidth = t.headWidth + (nw - t.headWidth) * FACE_EMA_ALPHA;
-            t.headHeight = t.headHeight + (nh - t.headHeight) * FACE_EMA_ALPHA;
-            t.normX = normX;
-            t.normY = normY;
-            t.missedFrames = 0;
-            nextTracks.push(t);
-        } else {
-            nextTracks.push({
-                id: nextFaceId++,
-                headX: nx, headY: ny, headWidth: nw, headHeight: nh,
-                normX, normY, isCheeky: false, missedFrames: 0
+    // Run AI Inference if video is ready
+    if (video.readyState >= 2) {
+        runVisionInference(now);
+    }
+
+    animFrameId = requestAnimationFrame(processNextFrame);
+}
+
+function runVisionInference(now) {
+    let handResults = null;
+    let faceResults = null;
+
+    try {
+        handResults = handLandmarker.detectForVideo(video, now);
+        faceResults = faceDetector.detectForVideo(video, now);
+    } catch (inferErr) {
+        console.warn("Detection frame skipped:", inferErr);
+    }
+
+    // Process Faces with EMA Tracking
+    updateFaceTracks(faceResults);
+
+    // Process Hands & Gestures
+    const detectedGestures = processHandGestures(handResults, now);
+
+    // Render Canvas & Effects
+    renderScene(handResults, detectedGestures, now);
+}
+
+// ==========================================
+// 4. FACE TRACKING (EMA & OCCLUSION COASTING)
+// ==========================================
+function updateFaceTracks(faceResults) {
+    const rawFaces = [];
+    if (faceResults && faceResults.detections) {
+        for (const d of faceResults.detections) {
+            const b = d.boundingBox;
+            rawFaces.push({
+                x: (b.originX + b.width / 2) / video.videoWidth,
+                y: (b.originY + b.height / 2) / video.videoHeight,
+                w: b.width / video.videoWidth,
+                h: b.height / video.videoHeight
             });
         }
     }
-    // Keep unmatched-but-still-alive tracks for a few frames (no EMA update; freeze last pos)
-    for (let j = 0; j < faceTracks.length; j++) {
-        if (!used[j]) {
-            const t = faceTracks[j];
-            t.missedFrames++;
-            if (t.missedFrames <= TRACK_KEEP_FRAMES) {
-                nextTracks.push(t);
+
+    // Match raw faces to existing face tracks
+    const updated = [];
+    const unmatchedRaw = [...rawFaces];
+
+    for (const track of faceTracks) {
+        let bestDist = 0.35;
+        let bestIdx = -1;
+
+        for (let i = 0; i < unmatchedRaw.length; i++) {
+            const raw = unmatchedRaw[i];
+            const dist = Math.hypot(track.x - raw.x, track.y - raw.y);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = i;
+            }
+        }
+
+        if (bestIdx !== -1) {
+            const matched = unmatchedRaw.splice(bestIdx, 1)[0];
+            // Exponential Moving Average (EMA) for butter-smooth tracking
+            track.x = track.x + (matched.x - track.x) * FACE_EMA;
+            track.y = track.y + (matched.y - track.y) * FACE_EMA;
+            track.w = track.w + (matched.w - track.w) * FACE_EMA;
+            track.h = track.h + (matched.h - track.h) * FACE_EMA;
+            track.missedFrames = 0;
+            updated.push(track);
+        } else {
+            // Coast through temporary occlusion (e.g. hand on nose)
+            track.missedFrames++;
+            if (track.missedFrames <= 6) {
+                updated.push(track);
             }
         }
     }
-    faceTracks = nextTracks;
+
+    // Add remaining new faces
+    for (const raw of unmatchedRaw) {
+        updated.push({
+            id: nextFaceId++,
+            x: raw.x,
+            y: raw.y,
+            w: raw.w,
+            h: raw.h,
+            missedFrames: 0
+        });
+    }
+
+    faceTracks = updated;
 }
 
-// FIX-06 & FIX-12: linear interpolation between the two most recent detection snapshots.
-// Returns interpolated { crowns, spawns, cheekySpawns } for the current render time.
-function interpolateSnapshot() {
-    if (!currSnapshot) return { crowns: [], spawns: [], cheekySpawns: [] };
-    if (!prevSnapshot || prevSnapshot.time === currSnapshot.time) {
-        return {
-            crowns: currSnapshot.crowns,
-            spawns: currSnapshot.spawns,
-            cheekySpawns: currSnapshot.cheekySpawns
-        };
+// ==========================================
+// 5. GESTURE RECOGNITION ENGINE
+// ==========================================
+function processHandGestures(handResults, now) {
+    const gestures = {
+        peace: false,
+        fingerHeart: false,
+        twoHandHeart: false,
+        middleFinger: false,
+        scubacat: false,
+        heartSpawns: [],
+        cheekySpawns: []
+    };
+
+    const hands = handResults?.landmarks || [];
+    if (hands.length === 0) {
+        resetFingerUI();
+        wavingEnergy = Math.max(0, wavingEnergy - 4);
+        return gestures;
     }
-    const now = performance.now();
-    let frac = (now - prevSnapshot.time) / (currSnapshot.time - prevSnapshot.time);
-    if (!isFinite(frac) || frac < 0) frac = 0;
-    if (frac > 1) frac = 1; // hold the latest position once we've caught up to it
 
-    const lerp = (a, b) => a + (b - a) * frac;
-    const lerpCrown = (a, b) => ({
-        headX: lerp(a.headX, b.headX),
-        headY: lerp(a.headY, b.headY),
-        headWidth: lerp(a.headWidth, b.headWidth),
-        headHeight: lerp(a.headHeight, b.headHeight),
-        isCheeky: b.isCheeky
-    });
-    const lerpSpawn = (a, b) => ({ x: lerp(a.x, b.x), y: lerp(a.y, b.y) });
+    // Update Diagnostics for First Hand
+    const h0 = hands[0];
+    const wrist = h0[0];
+    const palm = getDistance(h0[0], h0[9]);
 
-    // Match by index (snapshots are built from tracked faces, so order is stable per track id set).
-    const crowns = currSnapshot.crowns.map((c, i) => {
-        const p = prevSnapshot.crowns[i];
-        return p ? lerpCrown(p, c) : c;
-    });
-    // FIX-27: pair spawns by nearest position instead of array index. Spawn counts change
-    // between snapshots (hearts spawn/expire), so index pairing lerped unrelated hearts
-    // across the screen. Nearest-match with one-shot use keeps each particle's motion smooth.
-    const matchLerp = (currList, prevList) => {
-        const used = new Array(prevList.length).fill(false);
-        return currList.map(s => {
-            let best = -1;
-            let bestD = Infinity;
-            for (let i = 0; i < prevList.length; i++) {
-                if (used[i]) continue;
-                const d = Math.hypot(prevList[i].x - s.x, prevList[i].y - s.y);
-                if (d < bestD) {
-                    bestD = d;
-                    best = i;
+    updateFingerUI('thumb', getDistance(h0[4], h0[5]) > palm * 0.60);
+    updateFingerUI('index', isFingerExtended(h0, 5, 6, 8));
+    updateFingerUI('middle', isFingerExtended(h0, 9, 10, 12));
+    updateFingerUI('ring', isFingerExtended(h0, 13, 14, 16));
+    updateFingerUI('pinky', isFingerExtended(h0, 17, 18, 20));
+
+    // A. Check Peace Sign (✌️)
+    for (const hand of hands) {
+        if (isPeace(hand)) {
+            gestures.peace = true;
+            break;
+        }
+    }
+
+    // B. Check Korean Finger Heart (🫰)
+    for (const hand of hands) {
+        if (isFingerHeart(hand)) {
+            gestures.fingerHeart = true;
+            const spawnX = (hand[8].x + hand[4].x) / 2;
+            const spawnY = (hand[8].y + hand[4].y) / 2;
+            gestures.heartSpawns.push({ x: spawnX, y: spawnY });
+        }
+    }
+
+    // C. Check Middle Finger (🖕)
+    for (const hand of hands) {
+        if (isMiddleFinger(hand)) {
+            gestures.middleFinger = true;
+            gestures.cheekySpawns.push({ x: hand[12].x, y: hand[12].y });
+        }
+    }
+
+    // D. Check Two-Hand Heart (🫶)
+    if (hands.length >= 2) {
+        const heartCenter = isTwoHandHeart(hands[0], hands[1]);
+        if (heartCenter) {
+            gestures.twoHandHeart = true;
+            gestures.heartSpawns.push(heartCenter);
+        }
+    }
+
+    // E. Check Scuba Cat / Waving Gestures
+    // Hand 1 must be touching nose/face, Hand 2 must be waving
+    if (faceTracks.length > 0 && hands.length >= 2) {
+        let noseHandIdx = -1;
+
+        // Find hand touching face/nose zone
+        for (let i = 0; i < hands.length; i++) {
+            const h = hands[i];
+            for (const face of faceTracks) {
+                // Hand wrist or tips near face
+                const distCenter = Math.hypot(h[0].x - face.x, h[0].y - face.y);
+                const distTips = Math.hypot(h[8].x - face.x, h[8].y - face.y);
+                if (distCenter < face.w * 0.95 || distTips < face.w * 0.75) {
+                    noseHandIdx = i;
+                    break;
                 }
             }
-            if (best !== -1) {
-                used[best] = true;
-                return lerpSpawn(prevList[best], s);
+            if (noseHandIdx !== -1) break;
+        }
+
+        if (noseHandIdx !== -1) {
+            // Check remaining hand for waving
+            const waveHandIdx = noseHandIdx === 0 ? 1 : 0;
+            const waveHand = hands[waveHandIdx];
+            const waveWrist = waveHand[0];
+
+            let hist = handMovementHistories.get('wavingHand');
+            if (!hist) {
+                hist = { lastX: waveWrist.x, lastDir: 0, reversals: 0 };
+                handMovementHistories.set('wavingHand', hist);
             }
-            return s;
-        });
-    };
-    const spawns = matchLerp(currSnapshot.spawns, prevSnapshot.spawns);
-    const cheekySpawns = matchLerp(currSnapshot.cheekySpawns, prevSnapshot.cheekySpawns);
-    return { crowns, spawns, cheekySpawns };
-}
 
-// 60FPS Continuous Render Loop
-function renderLoop() {
-    if (!isCameraActive) return;
+            const dx = waveWrist.x - hist.lastX;
+            hist.lastX = waveWrist.x;
 
-    // FIX-17: read cached control values once per frame
-    const blurVal = blurInput ? blurInput.value : 0;
-    if (blurLabel) blurLabel.textContent = blurVal + 'px';
-    const showCrown = crownCheckbox ? crownCheckbox.checked : false;
-    const showCheeky = cheekyCheckbox ? cheekyCheckbox.checked : false;
-    showSkeleton = skeletonCheckbox ? skeletonCheckbox.checked : false;
+            if (Math.abs(dx) > 0.008) {
+                const dir = dx > 0 ? 1 : -1;
+                if (hist.lastDir !== 0 && dir !== hist.lastDir) {
+                    hist.reversals++;
+                    wavingEnergy = Math.min(100, wavingEnergy + 24); // Fast charge
+                }
+                hist.lastDir = dir;
+            } else {
+                wavingEnergy = Math.max(0, wavingEnergy - 1.5);
+            }
 
-    // FIX-06 & FIX-12: interpolate overlay positions between detections for smooth motion
-    const interp = interpolateSnapshot();
-    const interpCrowns = interp.crowns;
-    const interpSpawns = interp.spawns;
-    const interpCheekySpawns = interp.cheekySpawns;
-
-    // Render video frame
-    ctx.save();
-
-    // Flip horizontally for selfie mirroring
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-
-    // FIX-02: whole-canvas CSS blur driven by the hysteresis-latched peace state.
-    // FIX-17: only touch canvas.style.filter when the effective state actually changes.
-    if (effectivePeace) {
-        if (lastAppliedPeace !== true) {
-            canvas.style.filter = `blur(${blurVal}px)`;
-            lastAppliedPeace = true;
+            if (wavingEnergy >= 40) {
+                gestures.scubacat = true;
+            }
+        } else {
+            wavingEnergy = Math.max(0, wavingEnergy - 3);
         }
     } else {
-        if (lastAppliedPeace !== false) {
-            canvas.style.filter = 'none';
-            lastAppliedPeace = false;
-        }
+        wavingEnergy = Math.max(0, wavingEnergy - 3);
     }
 
-    // Draw video frame
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return gestures;
+}
 
-    // Draw hand skeleton if enabled
-    if (showSkeleton && lastHandLandmarks.length > 0) {
+// ==========================================
+// 6. SCENE RENDERING & EFFECT PIPELINE
+// ==========================================
+function renderScene(handResults, gestures, now) {
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // A. Peace Gesture Hysteresis (Blurring)
+    if (gestures.peace) {
+        peaceHoldTimer = HOLD_FRAMES;
+    } else if (peaceHoldTimer > 0) {
+        peaceHoldTimer--;
+    }
+
+    const isBlurActive = peaceHoldTimer > 0;
+    const blurPx = parseInt(blurInput.value) || 25;
+
+    if (isBlurActive !== lastAppliedBlur) {
+        canvas.style.filter = isBlurActive ? `blur(${blurPx}px)` : 'none';
+        lastAppliedBlur = isBlurActive;
+    }
+
+    // B. Draw Mirrored Webcam Video
+    ctx.save();
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, w, h);
+
+    // C. Draw Hand Skeleton if Enabled
+    if (checkSkeleton.checked && handResults?.landmarks) {
         ctx.lineWidth = 3;
         ctx.lineCap = 'round';
 
-        for (const hand of lastHandLandmarks) {
-            // Draw connections (white lines)
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-            for (const conn of HAND_CONNECTIONS) {
-                const p1 = hand[conn[0]];
-                const p2 = hand[conn[1]];
+        for (const hand of handResults.landmarks) {
+            // Bones (cyan glow)
+            ctx.strokeStyle = 'rgba(59, 130, 246, 0.85)';
+            for (const [p1, p2] of HAND_CONNECTIONS) {
                 ctx.beginPath();
-                ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
-                ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+                ctx.moveTo(hand[p1].x * w, hand[p1].y * h);
+                ctx.lineTo(hand[p2].x * w, hand[p2].y * h);
                 ctx.stroke();
             }
 
-            // Draw joints (red dots)
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
+            // Joints (white dots)
+            ctx.fillStyle = '#ffffff';
             for (const lm of hand) {
                 ctx.beginPath();
-                ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 4, 0, 2 * Math.PI);
+                ctx.arc(lm.x * w, lm.y * h, 3.5, 0, Math.PI * 2);
                 ctx.fill();
             }
         }
     }
 
-    ctx.restore();
+    ctx.restore(); // Restore unmirrored coordinate space for text & particles!
 
-    // Draw floating heart particles (drawn after restore so they aren't mirrored!)
-    particles = particles.filter(p => p.opacity > 0);
-    for (const p of particles) {
+    // D. Spawn Fingertip Particles
+    if (gestures.fingerHeart || gestures.twoHandHeart) {
+        for (const pt of gestures.heartSpawns) {
+            const sx = (1.0 - pt.x) * w;
+            const sy = pt.y * h;
+            activeParticles.push(new Particle(sx, sy, ['💖', '❤️', '💕', '💗', '💓', '💝']));
+        }
+    }
+
+    if (gestures.middleFinger) {
+        for (const pt of gestures.cheekySpawns) {
+            const sx = (1.0 - pt.x) * w;
+            const sy = pt.y * h;
+            activeParticles.push(new Particle(sx, sy, ['🖕', '😜', '🤪', '😝', '👅']));
+        }
+    }
+
+    // E. Draw 3D Halo Crowns (Manual Toggles)
+    const showHeartCrown = checkCrown.checked;
+    const showCheekyCrown = checkCheeky.checked;
+
+    if ((showHeartCrown || showCheekyCrown) && faceTracks.length > 0) {
+        const deltaSec = (now - lastCrownTime) / 1000;
+        crownAngle += CROWN_ANGULAR_SPEED * deltaSec;
+        lastCrownTime = now;
+
+        const crownEmojis = showCheekyCrown 
+            ? ['🖕', '😜', '🤪', '🖕', '😝', '👅'] 
+            : ['💖', '❤️', '💕', '💗', '💓', '💝'];
+
+        for (const face of faceTracks) {
+            const fx = (1.0 - face.x) * w; // Canvas horizontal flip compensation
+            const fy = face.y * h;
+            const fw = face.w * w;
+            const fh = face.h * h;
+            draw3DCrown(ctx, fx, fy, fw, fh, crownAngle, crownEmojis);
+        }
+
+        // Ambient particles
+        if (Math.random() < 0.25) {
+            const rx = Math.random() * w;
+            const ry = Math.random() * h * 0.8;
+            activeParticles.push(new Particle(rx, ry, crownEmojis));
+        }
+    } else {
+        lastCrownTime = now;
+    }
+
+    // F. Update & Render Floating Particles
+    activeParticles = activeParticles.filter(p => p.opacity > 0);
+    for (const p of activeParticles) {
         p.update();
         p.draw(ctx);
     }
 
-    // Draw rotating crown above each crowned face if either toggle is active
-    if ((showCrown || showCheeky) && interpCrowns.length > 0) {
-        // FIX-16: framerate-independent rotation using a time delta
-        const now = performance.now();
-        crownAngle += CROWN_ANGULAR_SPEED * (now - lastCrownTime) / 1000;
-        lastCrownTime = now;
-        const numHearts = 6;
-
-        for (const crown of interpCrowns) {
-            const rx = crown.headWidth * 0.55; // Horizontal radius of the crown
-            const ry = crown.headHeight * 0.10; // Vertical radius (flattened for 3D look)
-            const cx = canvas.width - crown.headX; // Canvas is mirrored horizontally
-            const cy = crown.headY - crown.headHeight * 0.38; // Hover above the head like an angel halo
-
-            // Choose emojis based purely on which toggle switch is active
-            let emojis = null;
-            if (showCheeky && crown.isCheeky) {
-                emojis = ['🖕', '😜', '🤪', '🖕', '😝', '👅'];
-            } else if (showCrown && crown.isHeart) {
-                emojis = ['💖', '❤️', '💕', '💗', '💓', '💝'];
-            }
-
-            // Skip drawing this face's crown if no active configuration matches
-            if (!emojis) continue;
-
-            for (let i = 0; i < numHearts; i++) {
-                const angle = crownAngle + (i * 2 * Math.PI / numHearts);
-                const hx = cx + Math.cos(angle) * rx;
-                const hy = cy + Math.sin(angle) * ry;
-
-                // 3D scaling: Front-facing hearts (sin > 0) are larger, back-facing are smaller
-                const depthScale = 0.85 + Math.sin(angle) * 0.25;
-                const size = (crown.headWidth * 0.18) * depthScale;
-
-                ctx.save();
-                // Draw pre-rendered emoji canvas using GPU-accelerated drawImage
-                const img = getEmojiCanvas(emojis[i % emojis.length], size);
-                ctx.drawImage(img, hx - img.width / 2, hy - img.height / 2);
-                ctx.restore();
-            }
-        }
-    } else {
-        // FIX-16: keep the timestamp fresh so the first frame after enabling isn't a huge jump
-        lastCrownTime = performance.now();
+    // G. Scuba Cat & Kicau Audio Management
+    if (gestures.scubacat) {
+        scubacatHoldTimer = 15; // ~500ms latch
+    } else if (scubacatHoldTimer > 0) {
+        scubacatHoldTimer--;
     }
 
-    // Spawn hearts at hand positions (FIX-06/FIX-12: use interpolated spawn positions)
-    if (interpSpawns.length > 0) {
-        heartSpawnCooldown--;
-        if (heartSpawnCooldown <= 0) {
-            for (const spawn of interpSpawns) {
-                const cx = (1.0 - spawn.x) * canvas.width;
-                const cy = spawn.y * canvas.height;
-                particles.push(new HeartParticle(cx, cy));
-            }
-            heartSpawnCooldown = 5; // Spawn rate at hands
+    if (scubacatHoldTimer > 0) {
+        if (catVideoEl && catVideoEl.style.display !== 'block') {
+            catVideoEl.style.display = 'block';
+        }
+        if (kicauAudio && kicauAudio.paused) {
+            kicauAudio.currentTime = 133; // Seek to 2:13
+            kicauAudio.play().catch(e => console.warn("Kicau audio blocked:", e));
         }
     } else {
-        heartSpawnCooldown = 0;
+        if (catVideoEl && catVideoEl.style.display !== 'none') {
+            catVideoEl.style.display = 'none';
+        }
+        if (kicauAudio && !kicauAudio.paused) {
+            kicauAudio.pause();
+        }
     }
 
-    // Spawn cheeky tongue-out particles at hand positions (FIX-06/FIX-12: interpolated)
-    if (interpCheekySpawns.length > 0) {
-        cheekySpawnCooldown--;
-        if (cheekySpawnCooldown <= 0) {
-            for (const spawn of interpCheekySpawns) {
-                const cx = (1.0 - spawn.x) * canvas.width;
-                const cy = spawn.y * canvas.height;
-                particles.push(new HeartParticle(cx, cy, ['🖕', '😜', '🤪', '😝', '👅']));
-            }
-            cheekySpawnCooldown = 5;
-        }
-    } else {
-        cheekySpawnCooldown = 0;
-    }
-
-    // Spawn ambient particles scattered randomly across the entire preview (fewer, slower)
-    if (lastCheekyState) {
-        ambientSpawnCooldown--;
-        if (ambientSpawnCooldown <= 0) {
-            const numAmbient = Math.random() < 0.4 ? 2 : 1;
-            for (let i = 0; i < numAmbient; i++) {
-                const rx = Math.random() * canvas.width;
-                const ry = Math.random() * canvas.height * 0.85;
-                const p = new HeartParticle(rx, ry, ['🖕', '😜', '🤪', '😝', '👅']);
-                p.size = p.size * 0.55;
-                p.vy = -(Math.random() * 1.5 + 0.8);
-                p.vx = (Math.random() - 0.5) * 1.2;
-                p.opacity = 0.7;
-                particles.push(p);
-            }
-            ambientSpawnCooldown = 18;
-        }
-    } else if (lastHeartState) {
-        ambientSpawnCooldown--;
-        if (ambientSpawnCooldown <= 0) {
-            const numAmbient = Math.random() < 0.4 ? 2 : 1;
-            for (let i = 0; i < numAmbient; i++) {
-                const rx = Math.random() * canvas.width;
-                const ry = Math.random() * canvas.height * 0.85; // Avoid very bottom
-                const p = new HeartParticle(rx, ry);
-                p.size = p.size * 0.55;  // Smaller than hand hearts
-                p.vy = -(Math.random() * 1.5 + 0.8); // Slower float upward
-                p.vx = (Math.random() - 0.5) * 1.2;  // Gentle side drift
-                p.opacity = 0.7;         // Slightly more transparent from start
-                particles.push(p);
-            }
-            ambientSpawnCooldown = 18;
-        }
-    } else {
-        ambientSpawnCooldown = 0;
-    }
-
-    animationFrameId = requestAnimationFrame(renderLoop);
+    // H. Update HUD Badge Indicator
+    updateHudStatus(isBlurActive, gestures, scubacatHoldTimer > 0);
 }
 
-// Throttled ML Detection Loop (Runs ~15 times per second to prevent CPU/GPU overload)
-async function runDetection() {
-    if (!isCameraActive) return;
-    if (isDetecting) return; // Skip if previous run is still processing
-    if (!handLandmarker || !faceDetector) return; // Models not ready yet
+function updateHudStatus(isBlurActive, gestures, isScubaActive) {
+    if (!hudStatus) return;
 
-    isDetecting = true;
-    try {
-        const startTimeMs = performance.now();
-        
-        // Only run landmarker and update state if we have a new camera frame
-        if (video.currentTime !== lastVideoTime && video.readyState >= 2) {
-            lastVideoTime = video.currentTime;
-            
-            const results = handLandmarker.detectForVideo(video, startTimeMs);
-            
-            // Mobile Optimization: run face detector only every 2nd frame (since faces move slower than hands)
-            let faceResults = { detections: [] };
-            faceDetectCounter++;
-            if (!IS_MOBILE || faceDetectCounter % 2 === 0) {
-                faceResults = faceDetector.detectForVideo(video, startTimeMs);
-                lastFaceResults = faceResults;
-            } else {
-                faceResults = lastFaceResults || { detections: [] };
-            }
-
-            // Store raw landmarks for real-time skeleton drawing
-            lastHandLandmarks = results.landmarks || [];
-
-            let peaceDetected = false;
-            const heartGestures = [];   // each entry: { x, y, handId }
-            const cheekyGestures = [];  // each entry: { x, y, handId }
-
-            // 1. Diagnose hands and check for gestures
-            if (results.landmarks && results.landmarks.length > 0) {
-                // FIX-05: assign stable hand IDs via the lightweight wrist tracker so hysteresis
-                // timers survive hand reordering between frames.
-                const trackedHands = trackHands(results.landmarks);
-
-                // Update diagnostics UI with status of the first hand
-                const firstHand = results.landmarks[0];
-                const wrist = firstHand[0];
-                const palmSize = getDistance(firstHand[0], firstHand[9]); // Wrist to middle MCP joint
-                const thumbUp = getDistance(firstHand[4], firstHand[5]) > (palmSize * 0.65);
-                const indexUp = getDistance(firstHand[8], wrist) > getDistance(firstHand[6], wrist) * 1.15;
-                const middleUp = getDistance(firstHand[12], wrist) > getDistance(firstHand[10], wrist) * 1.1;
-                const ringUp = getDistance(firstHand[16], wrist) > getDistance(firstHand[14], wrist) * 1.1;
-                const pinkyUp = getDistance(firstHand[20], wrist) > getDistance(firstHand[18], wrist) * 1.1;
-
-                updateFingerUI('thumb', thumbUp);
-                updateFingerUI('index', indexUp);
-                updateFingerUI('middle', middleUp);
-                updateFingerUI('ring', ringUp);
-                updateFingerUI('pinky', pinkyUp);
-
-                // Check peace gesture (causes blur)
-                for (const landmarks of results.landmarks) {
-                    if (isPeace(landmarks)) {
-                        peaceDetected = true;
-                    }
-                }
-
-                // Check one-hand Korean finger heart for all hands — with hysteresis latch
-                // FIX-05: keyed by stable hand track id instead of array index
-                // FIX-22: collect ids of hands firing a real heart THIS frame so the
-                // two-hand classic-heart detector below can avoid double-firing.
-                // FIX-23: a peace/V sign must never emit a heart — kill the latch immediately
-                // so the emoji disappears the instant the user switches to peace.
-                const heartHandIds = new Set();
-                for (const th of trackedHands) {
-                    const landmarks = th.landmarks;
-                    const handId = th.id;
-                    if (isPeace(landmarks)) {
-                        heartHoldTimers.set(handId, 0);
-                        continue; // peace wins over heart for this hand
-                    }
-                    if (isFingerHeart(landmarks)) {
-                        heartHandIds.add(handId);
-                        heartHoldTimers.set(handId, HEART_HOLD_DURATION); // Reset latch on positive detection
-                    }
-                    // Use latch: emit gesture if timer still active
-                    const remaining = heartHoldTimers.get(handId) || 0;
-                    if (remaining > 0) {
-                        heartHoldTimers.set(handId, remaining - 1);
-                        const gx = (landmarks[8].x + landmarks[4].x) / 2;
-                        const gy = (landmarks[8].y + landmarks[4].y) / 2;
-                        heartGestures.push({ x: gx, y: gy, handId });
-                    }
-                }
-
-                // Check middle finger gesture for all hands — with hysteresis latch
-                // FIX-05: keyed by stable hand track id instead of array index
-                for (const th of trackedHands) {
-                    const landmarks = th.landmarks;
-                    const handId = th.id;
-                    if (isMiddleFinger(landmarks)) {
-                        cheekyHoldTimers.set(handId, CHEEKY_HOLD_DURATION); // Reset latch
-                    }
-                    const remaining = cheekyHoldTimers.get(handId) || 0;
-                    if (remaining > 0) {
-                        cheekyHoldTimers.set(handId, remaining - 1);
-                        const gx = landmarks[12].x; // Middle finger tip
-                        const gy = landmarks[12].y;
-                        cheekyGestures.push({ x: gx, y: gy, handId });
-                    }
-                }
-
-                // Check two-hand classic heart for any pairs of hands
-                // FIX-13: normalize the index/thumb tip distances by the average palmSize of the
-                // two hands, consistent with the one-hand isFingerHeart approach (raw 0.12 was
-                // distance-dependent and failed for hands close to / far from the camera).
-                // FIX-22: emit ONE heart per hand (at each index tip) so a two-hand heart
-                // produces two emojis; skip pairs where both hands already fired a
-                // one-hand finger heart this frame to avoid quadruple-firing.
-                // FIX-23: pairs have no stable ID, so keep a shared latch timer; the pair
-                // snapshot keeps emitting during brief detection dips. Threshold widened to
-                // 0.6 * avgPalm so a slightly-loose heart still registers.
-                if (results.landmarks.length >= 2) {
-                    pairLoop:
-                    for (let i = 0; i < results.landmarks.length; i++) {
-                        for (let j = i + 1; j < results.landmarks.length; j++) {
-                            const l1 = results.landmarks[i];
-                            const l2 = results.landmarks[j];
-                            const id1 = trackedHands[i] ? trackedHands[i].id : null;
-                            const id2 = trackedHands[j] ? trackedHands[j].id : null;
-                            if (id1 !== null && id2 !== null && heartHandIds.has(id1) && heartHandIds.has(id2)) {
-                                continue; // both hands already emitted a one-hand heart
-                            }
-                            const palm1 = getDistance(l1[0], l1[9]);
-                            const palm2 = getDistance(l2[0], l2[9]);
-                            const avgPalm = (palm1 + palm2) / 2;
-                            if (avgPalm < 0.01) continue;
-                            const distIndex = getDistance(l1[8], l2[8]);
-                            const distThumb = getDistance(l1[4], l2[4]);
-                            // FIX-13: 0.6 * avgPalm replaces the old raw 0.12 threshold
-                            if (distIndex < 0.6 * avgPalm && distThumb < 0.6 * avgPalm) {
-                                twoHandHeartPos = [{ x: l1[8].x, y: l1[8].y }, { x: l2[8].x, y: l2[8].y }];
-                                twoHandHeartTimer = TWO_HAND_HEART_HOLD;
-                                break pairLoop; // emit from the closest-matching pair only
-                            }
-                        }
-                    }
-                }
-                // FIX-23: emit during the latch window, but never while one-hand finger hearts
-                // are firing this frame (those already produced their own emojis).
-                if (twoHandHeartTimer > 0 && heartHandIds.size === 0 && twoHandHeartPos) {
-                    heartGestures.push({ x: twoHandHeartPos[0].x, y: twoHandHeartPos[0].y, handId: -1 });
-                    heartGestures.push({ x: twoHandHeartPos[1].x, y: twoHandHeartPos[1].y, handId: -2 });
-                    twoHandHeartTimer--;
-                }
-            } else {
-                updateFingerUI('thumb', false);
-                updateFingerUI('index', false);
-                updateFingerUI('middle', false);
-                updateFingerUI('ring', false);
-                updateFingerUI('pinky', false);
-                // FIX-05: no hands this frame — clear the tracker so IDs restart fresh next time
-                prevHands = [];
-            }
-
-            // Process detected faces and match them to gestures
-            const scaleX = canvas.width / video.videoWidth;
-            const scaleY = canvas.height / video.videoHeight;
-
-            // Update persistent face tracks (stable IDs + EMA smoothing).
-            if (faceResults.detections && faceResults.detections.length > 0) {
-                updateFaceTracks(faceResults.detections, scaleX, scaleY);
-            } else {
-                // Still age existing tracks so they retire after the keep-alive window
-                for (const t of faceTracks) t.missedFrames++;
-                faceTracks = faceTracks.filter(t => t.missedFrames <= TRACK_KEEP_FRAMES);
-            }
-
-            // FIX-11: assign each gesture to its SINGLE nearest face (within a tight gate) instead
-            // of spawning particles for every face within 0.6. One-gesture-per-face is enforced by
-            // tracking which faces have already consumed a gesture this frame.
-            // FIX-22: heart gestures are consumed globally (each heart feeds one face), and each
-            // face may take up to 2 hearts — one per hand — so a two-hand classic heart emits
-            // two emojis instead of one.
-            // FIX-23: same 2-per-face rule for cheeky gestures, so two middle fingers raised
-            // by one person emit two emojis (one per hand).
-            const newSpawns = [];
-            const newCheekySpawns = [];
-            const heartConsumed = new Set();      // indices into heartGestures already used
-            const cheekyConsumed = new Set();     // indices into cheekyGestures already used
-
-            for (const track of faceTracks) {
-                let isFaceCheeky = false;
-                let isFaceHeart = false;
-
-                // FIX-11 + FIX-23: nearest-face assignment for cheeky gestures
-                let cheekyCountForFace = 0;
-                for (let gi = 0; gi < cheekyGestures.length && cheekyCountForFace < 2; gi++) {
-                    if (cheekyConsumed.has(gi)) continue;
-                    const g = cheekyGestures[gi];
-                    const dist = Math.hypot(track.normX - g.x, track.normY - g.y);
-                    if (dist < GESTURE_FACE_GATE) {
-                        isFaceCheeky = true;
-                        newCheekySpawns.push({ x: g.x, y: g.y });
-                        cheekyConsumed.add(gi);
-                        cheekyCountForFace++;
-                    }
-                }
-
-                // FIX-11 + FIX-22: nearest-face assignment for heart gestures
-                let heartCountForFace = 0;
-                for (let gi = 0; gi < heartGestures.length && heartCountForFace < 2; gi++) {
-                    if (heartConsumed.has(gi)) continue;
-                    const g = heartGestures[gi];
-                    const dist = Math.hypot(track.normX - g.x, track.normY - g.y);
-                    if (dist < GESTURE_FACE_GATE) {
-                        isFaceHeart = true;
-                        newSpawns.push({ x: g.x, y: g.y });
-                        heartConsumed.add(gi);
-                        heartCountForFace++;
-                    }
-                }
-
-                // FIX-39: mark crown type. Heart-only when at least one heart gesture matched,
-                // else cheeky when a cheeky gesture matched. Faces with no gesture at all
-                // do NOT produce any crown / ambient hearts, fixing the regression where
-                // heart emojis appeared simply because a face was visible.
-                track.isCheeky = isFaceCheeky;
-                track.isHeart = isFaceHeart;
-            }
-
-            // FIX-04: build the crown list from the (smoothed, tracked) face tracks
-            const newCrowns = faceTracks.map(t => ({
-                headX: t.headX,
-                headY: t.headY,
-                headWidth: t.headWidth,
-                headHeight: t.headHeight,
-                isCheeky: t.isCheeky,
-                isHeart: t.isHeart
-            }));
-
-            // FIX-02: temporal hysteresis (latch) for the peace/blur gesture.
-            // On positive detection, charge the hold timer; otherwise decay it. The effective
-            // blur state stays active while the timer > 0, bridging brief detection drops.
-            if (peaceDetected) {
-                peaceHoldTimer = PEACE_HOLD_DURATION;
-            } else if (peaceHoldTimer > 0) {
-                peaceHoldTimer--;
-            }
-            effectivePeace = peaceHoldTimer > 0;
-
-            // FIX-06 & FIX-12: publish a new interpolation snapshot for this detection.
-            // The render loop linearly interpolates between prevSnapshot and currSnapshot.
-            const snapshot = {
-                time: performance.now(),
-                crowns: newCrowns,
-                spawns: newSpawns,
-                cheekySpawns: newCheekySpawns
-            };
-            prevSnapshot = currSnapshot;
-            currSnapshot = snapshot;
-
-            // Update ambient-particle states (read cached toggles)
-            const showCrown = crownCheckbox ? crownCheckbox.checked : false;
-            const showCheeky = cheekyCheckbox ? cheekyCheckbox.checked : false;
-            lastHeartState = showCrown && newCrowns.some(c => c.isHeart);
-            lastCheekyState = showCheeky && newCrowns.some(c => c.isCheeky);
-        }
-    } catch (err) {
-        console.error("ML detection execution failed:", err);
+    if (isScubaActive) {
+        hudStatus.className = 'hud-pill active-cheeky';
+        hudStatus.textContent = '🐱 KICAU SCUBA CAT ACTIVE';
+    } else if (isBlurActive) {
+        hudStatus.className = 'hud-pill active-peace';
+        hudStatus.textContent = '✌️ PEACE (BLUR ACTIVE)';
+    } else if (gestures.twoHandHeart) {
+        hudStatus.className = 'hud-pill active-heart';
+        hudStatus.textContent = '🫶 TWO-HAND HEART';
+    } else if (gestures.fingerHeart) {
+        hudStatus.className = 'hud-pill active-heart';
+        hudStatus.textContent = '🫰 FINGER HEART';
+    } else if (gestures.middleFinger) {
+        hudStatus.className = 'hud-pill active-cheeky';
+        hudStatus.textContent = '🖕 JARI TENGAH';
+    } else {
+        hudStatus.className = 'hud-pill';
+        hudStatus.textContent = 'Memindai Gestur...';
     }
-    
-    isDetecting = false;
-    
-    // Schedule next detection (100ms on mobile for lower CPU/heat, 66ms on desktop)
-    const delay = IS_MOBILE ? 100 : 66;
-    detectionTimeoutId = setTimeout(runDetection, delay);
 }
 
-function startDetectionLoop() {
-    // Adjust canvas size to match video resolution (capped at max width of 800 for high performance)
-    const maxCanvasWidth = 800;
-    let targetWidth = video.videoWidth;
-    let targetHeight = video.videoHeight;
-    if (targetWidth > maxCanvasWidth) {
-        const scale = maxCanvasWidth / targetWidth;
-        targetWidth = maxCanvasWidth;
-        targetHeight = Math.round(targetHeight * scale);
-    }
-
-    if (canvas.width !== targetWidth) {
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-        
-        // Dynamically adjust viewer-box aspect ratio to match camera feed, preventing mobile landscape cropping!
-        const viewerBox = document.getElementById('viewer-box');
-        if (viewerBox) {
-            viewerBox.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
-        }
-    }
-
-    // Hide starting placeholder when the camera feed begins rendering
-    if (loadingPlaceholder) {
-        loadingPlaceholder.style.display = 'none';
-    }
-
-    // Start 60fps rendering
-    renderLoop();
-
-    // Start throttled AI model runs
-    runDetection();
-}
-
-// Helper to update diagnostics UI indicators (DOM refs are pre-cached)
-function updateFingerUI(id, extended) {
-    const el = fingerStatusEls[id];
+// ==========================================
+// 7. UI LISTENERS & CONTROL BINDINGS
+// ==========================================
+function updateFingerUI(finger, isUp) {
+    const el = fingerEls[finger];
     if (!el) return;
-    if (extended) {
-        el.textContent = "Extended";
-        el.className = "finger-status extended";
+    if (isUp) {
+        el.className = 'finger-status up';
+        el.textContent = 'UP';
     } else {
-        el.textContent = "Folded";
-        el.className = "finger-status folded";
+        el.className = 'finger-status folded';
+        el.textContent = 'FOLDED';
     }
 }
 
+function resetFingerUI() {
+    for (const key of Object.keys(fingerEls)) {
+        updateFingerUI(key, false);
+    }
+}
 
+// Blur Intensity Slider
+blurInput.addEventListener('input', () => {
+    blurLabel.textContent = `${blurInput.value}px`;
+    if (lastAppliedBlur) {
+        canvas.style.filter = `blur(${blurInput.value}px)`;
+    }
+});
 
-// Native HTML5 Audio Player integration
-const audio = document.getElementById('audio-player');
-let isMusicPlaying = false;
+// Detection Confidence Slider
+confInput.addEventListener('input', () => {
+    confLabel.textContent = `${confInput.value}%`;
+});
+
+confInput.addEventListener('change', async () => {
+    if (handLandmarker && isModelReady) {
+        const val = parseInt(confInput.value) / 100;
+        await handLandmarker.setOptions({
+            minHandDetectionConfidence: val,
+            minTrackingConfidence: val
+        });
+    }
+});
+
+// Mutually Exclusive Crown Toggles
+checkCrown.addEventListener('change', () => {
+    if (checkCrown.checked) {
+        checkCheeky.checked = false;
+    }
+});
+
+checkCheeky.addEventListener('change', () => {
+    if (checkCheeky.checked) {
+        checkCrown.checked = false;
+    }
+});
+
+// Background Music ("Foto Kita Blur" 0:23 - 0:52)
+btnMusic.addEventListener('click', toggleMusic);
 
 function toggleMusic() {
-    if (!audio) return;
+    if (!musicAudio) return;
+
     if (isMusicPlaying) {
-        stopMusic();
-    } else {
-        startMusic();
-    }
-}
-
-// Monitor time update to stop at exactly 52 seconds (0:52)
-audio.addEventListener('timeupdate', () => {
-    if (audio.currentTime >= 52) {
-        stopMusic();
-    }
-});
-
-function startMusic() {
-    audio.currentTime = 23; // Seek to 23s (0:23)
-    audio.play().then(() => {
-        isMusicPlaying = true;
-
+        musicAudio.pause();
+        isMusicPlaying = false;
+        btnMusic.className = 'btn btn-flex btn-secondary';
         btnMusic.innerHTML = `
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
-            Stop Music
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            Musik (0:23 - 0:52)
         `;
-        btnMusic.style.background = 'var(--danger-bg)';
-        btnMusic.style.color = 'var(--danger)';
-        btnMusic.style.borderColor = 'rgba(243, 18, 96, 0.2)';
-    }).catch(err => {
-        console.error("Audio playback blocked or failed:", err);
-        alert("Playback failed. Please click on the page to interact first.");
-    });
-}
-
-function stopMusic() {
-    if (audio) {
-        audio.pause();
+    } else {
+        musicAudio.currentTime = 23; // Start at 0:23
+        musicAudio.play().then(() => {
+            isMusicPlaying = true;
+            btnMusic.className = 'btn btn-flex btn-secondary btn-music-playing';
+            btnMusic.innerHTML = `
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
+                Stop Musik
+            `;
+        }).catch(err => {
+            console.warn("Audio autoplay blocked:", err);
+            alert("Klik layar sekali terlebih dahulu untuk mengizinkan pemutaran audio.");
+        });
     }
-    isMusicPlaying = false;
-
-    btnMusic.innerHTML = `
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-        Play Music (0:23 - 0:52)
-    `;
-    btnMusic.style.background = 'rgba(255,255,255,0.03)';
-    btnMusic.style.color = 'var(--text-primary)';
-    btnMusic.style.borderColor = 'var(--border)';
 }
 
-// Mutual exclusivity logic for crown toggles (reuses the cached checkbox refs)
-if (crownCheckbox && cheekyCheckbox) {
-    crownCheckbox.addEventListener('change', () => {
-        if (crownCheckbox.checked) {
-            cheekyCheckbox.checked = false;
-        }
-    });
-
-    cheekyCheckbox.addEventListener('change', () => {
-        if (cheekyCheckbox.checked) {
-            crownCheckbox.checked = false;
-        }
-    });
-}
-
-// Hand Gesture Glossary (Kamus Gestur) toggle. CSP-strict, no inline handlers.
-// FIX-24: persistent dictionary of recognized hand gestures in Bahasa Indonesia
-// with an on/off toggle; open state survives page reloads via localStorage.
-function setGlossaryOpen(open) {
-    if (!glossaryPanel || !btnGlossary) return;
-    glossaryPanel.hidden = !open;
-    btnGlossary.setAttribute('aria-expanded', String(open));
-    btnGlossary.classList.toggle('active', open);
-    try {
-        localStorage.setItem('foto-kita-blur-glossary-open', open ? '1' : '0');
-    } catch (e) { /* storage unavailable — non-fatal */ }
-}
-
-if (btnGlossary) {
-    btnGlossary.addEventListener('click', () => setGlossaryOpen(glossaryPanel.hidden));
-}
-if (btnGlossaryClose) {
-    btnGlossaryClose.addEventListener('click', () => setGlossaryOpen(false));
-}
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && glossaryPanel && !glossaryPanel.hidden) {
-        setGlossaryOpen(false);
+// Loop music between 23s and 52s
+musicAudio.addEventListener('timeupdate', () => {
+    if (isMusicPlaying && musicAudio.currentTime >= 52) {
+        musicAudio.currentTime = 23;
     }
 });
-// Restore last open state (defensive try/catch for restricted storage contexts)
-try {
-    if (localStorage.getItem('foto-kita-blur-glossary-open') === '1') {
-        setGlossaryOpen(true);
-    }
-} catch (e) { /* ignore */ }
 
-// Event binding (replaces inline onclick/oninput/onchange handlers so the app
-// can ship a strict CSP without 'unsafe-inline' for scripts).
+// Loop kicau audio between 133s and 146s
+kicauAudio.addEventListener('timeupdate', () => {
+    if (kicauAudio.currentTime >= 146) {
+        kicauAudio.currentTime = 133;
+    }
+});
+
+// Kamus Gestur Toggle
+btnGlossary.addEventListener('click', () => {
+    const isHidden = glossaryPanel.hasAttribute('hidden');
+    if (isHidden) {
+        glossaryPanel.removeAttribute('hidden');
+        btnGlossary.setAttribute('aria-expanded', 'true');
+    } else {
+        glossaryPanel.setAttribute('hidden', '');
+        btnGlossary.setAttribute('aria-expanded', 'false');
+    }
+});
+
+btnGlossaryClose.addEventListener('click', () => {
+    glossaryPanel.setAttribute('hidden', '');
+    btnGlossary.setAttribute('aria-expanded', 'false');
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !glossaryPanel.hasAttribute('hidden')) {
+        glossaryPanel.setAttribute('hidden', '');
+        btnGlossary.setAttribute('aria-expanded', 'false');
+    }
+});
+
 btnToggle.addEventListener('click', toggleCamera);
-confInput.addEventListener('input', updateConfidenceLabel);
-confInput.addEventListener('change', applyConfidenceSetting);
-if (btnMusic) btnMusic.addEventListener('click', toggleMusic);
+
+// Startup Initialization
+window.addEventListener('DOMContentLoaded', () => {
+    initVisionModels();
+});

@@ -13,6 +13,7 @@ DEBUG = os.environ.get("FOTO_BLUR_DEBUG", "0") == "1"
 # identifiers so arbitrary paths can never reach the server-side filesystem.
 AUDIO_FILES = {
     "music": "foto-kita-blur.mp3",
+    "kicau": "kicau-mania.mp3",
 }
 
 app = Flask(__name__)
@@ -55,6 +56,11 @@ def _serve_audio(key):
 @app.route("/music")
 def serve_music():
     return _serve_audio("music")
+
+
+@app.route("/kicau")
+def serve_kicau():
+    return _serve_audio("kicau")
 
 
 

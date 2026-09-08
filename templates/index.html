@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Foto Kita Blur - real-time AI privacy shield that blurs your webcam when you flash a peace sign. Processed locally.">
+    <meta name="description" content="Foto Kita Blur - real-time AI privacy shield and interactive hand gesture effects. Processed 100% locally.">
     <meta name="theme-color" content="#030303">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%8C%EF%B8%8F%3C/text%3E%3C/svg%3E">
     <title>Foto Kita Blur - Privacy Shield</title>
@@ -25,37 +25,45 @@
             <!-- Header section -->
             <div class="header">
                 <div class="title-group">
-                    <span class="subtitle"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-camera-icon lucide-camera"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg></span>
+                    <span class="subtitle"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg> AI PRIVACY SHIELD</span>
                     <span class="title">Foto Kita Blur</span>
                 </div>
                 <div class="status-badge" id="status-badge">
                     <span class="status-dot"></span>
-                    <span id="status-text">Model Loading</span>
+                    <span id="status-text">Memuat Model AI...</span>
                 </div>
             </div>
 
-            <!-- Canvas Section -->
+            <!-- Canvas & Video Section -->
             <div class="viewer-box" id="viewer-box">
                 <div class="placeholder" id="loading-placeholder">
                     <div class="spinner"></div>
-                    <span id="loading-text">Loading Hand Detection Model...</span>
+                    <span id="loading-text">Memuat Model Hand & Face Vision...</span>
                 </div>
                 <canvas id="output-canvas"></canvas>
+
+                <!-- HUD Overlay -->
+                <div class="hud-layer" id="hud-layer">
+                    <div class="hud-pill" id="hud-status">Kamera Nonaktif</div>
+                    <div class="hud-pill hud-fps" id="hud-fps">FPS: 0</div>
+                </div>
+
                 <!-- Picture-in-Picture cat gif overlay -->
+                <img id="cat-video" class="scubacat-overlay" src="{{ url_for('static', filename='cat-scuba.gif') }}" alt="Scuba Cat" style="display: none;">
             </div>
 
             <!-- Controls section -->
             <div class="controls">
-                <div style="display: flex; gap: 1rem; width: 100%; flex-wrap: wrap;">
-                    <button class="btn btn-flex" id="btn-toggle" disabled>Please Wait...</button>
+                <div class="controls-action-bar">
+                    <button class="btn btn-flex btn-primary" id="btn-toggle" disabled>Mohon Tunggu...</button>
 
-                    <button class="btn btn-flex btn-music" id="btn-music">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-                        foto kita blur (0:23 - 0:52)
+                    <button class="btn btn-flex btn-secondary" id="btn-music">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+                        Musik (0:23 - 0:52)
                     </button>
 
-                    <button class="btn btn-flex btn-music" id="btn-glossary" aria-expanded="false" aria-controls="glossary-panel">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path></svg>
+                    <button class="btn btn-flex btn-secondary" id="btn-glossary" aria-expanded="false" aria-controls="glossary-panel">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path></svg>
                         Kamus Gestur
                     </button>
                 </div>
@@ -64,21 +72,21 @@
                     <div class="slider-group">
                         <div class="slider-info">
                             <span>Blur Intensity</span>
-                            <span id="label-blur">20px</span>
+                            <span id="label-blur">25px</span>
                         </div>
-                        <input type="range" id="input-blur" min="5" max="80" step="5" value="20">
+                        <input type="range" id="input-blur" min="5" max="80" step="5" value="25">
                     </div>
 
                     <div class="slider-group">
                         <div class="slider-info">
-                            <span>Detection Confidence</span>
+                            <span>Detection Sensitivity</span>
                             <span id="label-conf">50%</span>
                         </div>
-                        <input type="range" id="input-conf" min="10" max="95" step="5" value="50">
+                        <input type="range" id="input-conf" min="10" max="90" step="5" value="50">
                     </div>
 
                     <div class="slider-group switch-row">
-                        <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-primary);">Show Hand Skeleton</span>
+                        <span class="switch-label">Show Hand Skeleton</span>
                         <label class="switch">
                             <input type="checkbox" id="check-skeleton">
                             <span class="slider round"></span>
@@ -86,7 +94,7 @@
                     </div>
 
                     <div class="slider-group switch-row">
-                        <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-primary);">Show Heart Crown</span>
+                        <span class="switch-label">Mahkota Love Halo</span>
                         <label class="switch">
                             <input type="checkbox" id="check-crown">
                             <span class="slider round"></span>
@@ -94,7 +102,7 @@
                     </div>
 
                     <div class="slider-group switch-row">
-                        <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-primary);">Show Middle Finger Crown</span>
+                        <span class="switch-label">Mahkota Jari Tengah Halo</span>
                         <label class="switch">
                             <input type="checkbox" id="check-cheeky">
                             <span class="slider round"></span>
@@ -106,8 +114,8 @@
                 <div class="glossary-panel" id="glossary-panel" hidden>
                     <div class="glossary-head">
                         <div>
-                            <div class="glossary-title">Kamus Gestur</div>
-                            <div class="glossary-sub">Gerakan tangan yang dikenali Foto Kita Blur</div>
+                            <div class="glossary-title">Kamus Gestur Interaktif</div>
+                            <div class="glossary-sub">Gerakan tangan yang dikenali Foto Kita Blur secara real-time</div>
                         </div>
                         <button class="glossary-close" id="btn-glossary-close" aria-label="Tutup kamus gestur">&times;</button>
                     </div>
@@ -116,32 +124,40 @@
                             <div class="glossary-emoji" aria-hidden="true">&#9996;&#65039;</div>
                             <div class="glossary-body">
                                 <div class="glossary-name">Peace (Dua Jari)</div>
-                                <div class="glossary-desc">Angkat telunjuk dan jari tengah membentuk huruf V, tekuk jari lainnya.</div>
-                                <div class="glossary-effect">Efek: Wajah Terblur</div>
+                                <div class="glossary-desc">Angkat telunjuk dan jari tengah membentuk huruf V, tekuk jari manis dan kelingking.</div>
+                                <div class="glossary-effect">Efek: Layar Wajah Terblur</div>
                             </div>
                         </div>
                         <div class="glossary-card">
                             <div class="glossary-emoji" aria-hidden="true">&#129303;</div>
                             <div class="glossary-body">
                                 <div class="glossary-name">Love Satu Tangan</div>
-                                <div class="glossary-desc">Rapatkan ujung ibu jari dan telunjuk membentuk hati kecil ala Korea.</div>
-                                <div class="glossary-effect">Efek: Emoji Love</div>
+                                <div class="glossary-desc">Silangkan / dekatkan ujung ibu jari dan telunjuk membentuk hati kecil ala Korea.</div>
+                                <div class="glossary-effect">Efek: Partikel Love Melayang</div>
                             </div>
                         </div>
                         <div class="glossary-card">
                             <div class="glossary-emoji" aria-hidden="true">&#10084;&#65039;</div>
                             <div class="glossary-body">
                                 <div class="glossary-name">Love Dua Tangan</div>
-                                <div class="glossary-desc">Bentuk hati besar: rapatkan ujung kedua telunjuk, ibu jari saling menyentuh di bawah.</div>
-                                <div class="glossary-effect">Efek: 2 Emoji Love</div>
+                                <div class="glossary-desc">Bentuk hati besar: satukan kedua ujung telunjuk di atas dan kedua ibu jari di bawah.</div>
+                                <div class="glossary-effect">Efek: Partikel Hati Besar</div>
                             </div>
                         </div>
                         <div class="glossary-card">
                             <div class="glossary-emoji" aria-hidden="true">&#128405;</div>
                             <div class="glossary-body">
                                 <div class="glossary-name">Jari Tengah</div>
-                                <div class="glossary-desc">Angkat jari tengah, tekuk telunjuk, manis, dan kelingking.</div>
-                                <div class="glossary-effect">Efek: Mahkota + Emoji</div>
+                                <div class="glossary-desc">Angkat jari tengah tegak, tekuk telunjuk, jari manis, dan kelingking.</div>
+                                <div class="glossary-effect">Efek: Partikel & Mahkota Cheeky</div>
+                            </div>
+                        </div>
+                        <div class="glossary-card">
+                            <div class="glossary-emoji" aria-hidden="true">&#129391;</div>
+                            <div class="glossary-body">
+                                <div class="glossary-name">Tutup Hidung & Melambai</div>
+                                <div class="glossary-desc">Tutup hidung dengan satu tangan, lalu lambaikan tangan lainnya di dekat wajah.</div>
+                                <div class="glossary-effect">Efek: Kucing Scuba + Lagu Kicau Mania</div>
                             </div>
                         </div>
                     </div>
@@ -149,26 +165,26 @@
 
                 <!-- Real-time Finger Diagnostics Panel -->
                 <div class="finger-panel" id="finger-panel">
-                    <div class="finger-title">Real-time Finger Diagnostics</div>
+                    <div class="finger-title">Diagnostik Posisi Jari (Tangan Utama)</div>
                     <div class="finger-grid">
                         <div class="finger-item" id="finger-thumb">
-                            <span class="finger-name">Thumb (Jempol)</span>
+                            <span class="finger-name">Jempol</span>
                             <span class="finger-status folded">Folded</span>
                         </div>
                         <div class="finger-item" id="finger-index">
-                            <span class="finger-name">Index (Telunjuk)</span>
+                            <span class="finger-name">Telunjuk</span>
                             <span class="finger-status folded">Folded</span>
                         </div>
                         <div class="finger-item" id="finger-middle">
-                            <span class="finger-name">Middle (Tengah)</span>
+                            <span class="finger-name">Tengah</span>
                             <span class="finger-status folded">Folded</span>
                         </div>
                         <div class="finger-item" id="finger-ring">
-                            <span class="finger-name">Ring (Manis)</span>
+                            <span class="finger-name">Manis</span>
                             <span class="finger-status folded">Folded</span>
                         </div>
                         <div class="finger-item" id="finger-pinky">
-                            <span class="finger-name">Pinky (Kelingking)</span>
+                            <span class="finger-name">Kelingking</span>
                             <span class="finger-status folded">Folded</span>
                         </div>
                     </div>
@@ -176,13 +192,12 @@
             </div>
         </div>
 
-
-
-        <!-- Native Audio Player for Local MP3 -->
+        <!-- Native Audio Players -->
         <audio id="audio-player" src="/music" preload="auto"></audio>
+        <audio id="kicau-player" src="/kicau" preload="auto"></audio>
 
         <div class="footer">
-            Processed locally on your device for absolute privacy
+            Diproses secara lokal di perangkat Anda untuk perlindungan privasi mutlak.
         </div>
     </div>
 

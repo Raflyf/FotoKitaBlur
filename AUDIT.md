@@ -283,3 +283,33 @@ from a light touch / non-gesture.
   heart gestures.
 - Added `nearTouchHand()` regression test to ensure fingertips merely touching
   does not trigger heart.
+
+## FIX-40 — Full System Overhaul: Anti-Miss Invariant Gesture Engine & Modular Architecture
+
+**Date:** 2026-09-08
+**Files:** `app.py`, `blur.py`, `static/gestures.js`, `static/particles.js`, `static/main.js`, `static/style.css`, `templates/index.html`, `tests/gestures.test.mjs`, `tests/test_blur.py`
+
+### Root Causes of Historical Detection Misses & Instability
+1. **2D Perspective Foreshortening:** Previous distance-to-wrist checks (`dist(tip, wrist) > dist(pip, wrist) * 1.15`) broke when the user tilted their hand toward or away from the camera.
+2. **Artificial Detection Delay:** Detection ran in a throttled `setTimeout(66ms/100ms)` loop (~15 FPS), missing quick hand gestures (100-200ms duration).
+3. **Scuba Cat & Waving Resets:** Waving history cleared completely on any single dropped hand frame, and BlazeFace nose tip keypoints frequently dropped when occluded by the hand.
+4. **Missing Backend Audio Route:** `/kicau` was not served in `app.py`, leading to HTTP 404 on cat jumpscare audio.
+
+### Solutions Implemented
+1. **Scale-Normalized, Rotation-Invariant Finger Classification (`gestures.js` & `blur.py`):**
+   - Independent `isFingerExtended` and `isFingerFolded` metrics combining MCP-relative and wrist-relative vectors to maintain invariant classification under 3D hand tilt.
+   - Comprehensive gesture predicates: Peace (✌️), Korean Finger Heart (🫰), Two-Hand Heart (🫶), and Middle Finger (🖕).
+2. **Synchronized Video Frame Processing Loop (`main.js`):**
+   - Runs directly on native camera FPS (30-60 FPS) with `requestAnimationFrame`.
+   - Exponential Moving Average (EMA) smoothing for face tracking with occlusion coasting (up to 6 missed frames).
+3. **Asymmetric Temporal Hysteresis:**
+   - Fast attack (1-2 frames to trigger) and smooth release (8-frame hold) prevents all flickering and dropped detections.
+   - Leaky integrator for waving movement with direction reversal counters.
+4. **Modular Architecture & UI System:**
+   - Dedicated `static/particles.js` for floating emoji particles and 3D rotating halo crowns with depth scaling.
+   - Enhanced `/kicau` and `/music` endpoints in `app.py`.
+   - Fully accessible dark-mode UI (WCAG 2.2 compliant) with live HUD, diagnostics panel, and Kamus Gestur modal.
+5. **Testing Verification:**
+   - 12/12 passing Node.js tests in `tests/gestures.test.mjs`.
+   - 13/13 passing Python unit tests in `tests/test_blur.py`.
+
