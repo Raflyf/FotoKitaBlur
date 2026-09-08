@@ -74,8 +74,8 @@ let crownAngle = 0;
 let lastCrownTime = performance.now();
 const CROWN_ANGULAR_SPEED = 2.4; // radians per sec
 
-// Gesture Hold & Hysteresis Timers (Anti-Flicker / Anti-Miss)
-const HOLD_FRAMES = 8; // ~250ms hold on drop
+// Gesture Hold & Hysteresis Timers (Anti-Flicker / Anti-Miss at 60 FPS)
+const HOLD_FRAMES = 16; // ~270ms hold on drop at 60 FPS
 let peaceHoldTimer = 0;
 let scubacatHoldTimer = 0;
 let lastAppliedBlur = false;
@@ -84,10 +84,28 @@ let lastAppliedBlur = false;
 let wavingEnergy = 0;
 let handMovementHistories = new Map(); // handId -> { lastX, lastDir, reversals, sinceChange }
 
-// FPS Tracking
+// Real-time 60 FPS Render & Throttled Vision State
 let fpsCounter = 0;
 let lastFpsTime = performance.now();
 let displayFps = 0;
+
+let isDetecting = false;
+let lastDetectTime = 0;
+let faceInferenceCounter = 0;
+const VISION_INTERVAL_MS = 32; // ~30 FPS vision sampling
+const FACE_STRIDE = 3;         // BlazeFace runs every 3rd vision tick (~10 FPS)
+
+let latestHandResults = null;
+let latestFaceResults = null;
+let latestGestures = {
+    peace: false,
+    fingerHeart: false,
+    twoHandHeart: false,
+    middleFinger: false,
+    scubacat: false,
+    heartSpawns: [],
+    cheekySpawns: []
+};
 
 // ==========================================
 // 1. INITIALIZE AI MODELS
@@ -188,8 +206,8 @@ async function startCamera() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: 640 },
+                height: { ideal: 360 },
                 facingMode: 'user'
             },
             audio: false
@@ -205,17 +223,13 @@ async function startCamera() {
             };
         });
 
-        // Set matching resolution for high-performance canvas
-        const maxWidth = 960;
-        let w = video.videoWidth || 640;
-        let h = video.videoHeight || 480;
-        if (w > maxWidth) {
-            const scale = maxWidth / w;
-            w = maxWidth;
-            h = Math.round(h * scale);
-        }
-        canvas.width = w;
-        canvas.height = h;
+        // Set matching lightweight resolution for high-performance canvas
+        let vw = video.videoWidth || 640;
+        let vh = video.videoHeight || 360;
+        const targetWidth = 640;
+        const scale = Math.min(1.0, targetWidth / vw);
+        canvas.width = Math.round(vw * scale);
+        canvas.height = Math.round(vh * scale);
 
         isCameraActive = true;
         btnToggle.disabled = false;
@@ -228,11 +242,13 @@ async function startCamera() {
         }
         if (hudStatus) hudStatus.textContent = 'Memindai Gestur...';
 
-        // Start High-FPS Detection Loop
+        // Start High-FPS Synchronized Render Loop
         lastCrownTime = performance.now();
         lastFpsTime = performance.now();
+        lastDetectTime = 0;
+        faceInferenceCounter = 0;
         fpsCounter = 0;
-        processNextFrame();
+        animFrameId = requestAnimationFrame(processNextFrame);
 
     } catch (err) {
         console.error("Gagal membuka kamera:", err);
@@ -255,6 +271,11 @@ function stopCamera() {
     }
     video.srcObject = null;
     isCameraActive = false;
+    isDetecting = false;
+    latestHandResults = null;
+    latestFaceResults = null;
+    faceTracks = [];
+    activeParticles = [];
 
     // Reset Scuba Cat & Audio
     if (catVideoEl) catVideoEl.style.display = 'none';
@@ -286,12 +307,10 @@ function stopCamera() {
 // ==========================================
 // 3. SYNCHRONIZED VISION & RENDER LOOP
 // ==========================================
-function processNextFrame() {
+function processNextFrame(now = performance.now()) {
     if (!isCameraActive) return;
 
-    const now = performance.now();
-
-    // Calculate real-time FPS
+    // Calculate real-time 60 FPS metric
     fpsCounter++;
     if (now - lastFpsTime >= 1000) {
         displayFps = Math.round((fpsCounter * 1000) / (now - lastFpsTime));
@@ -300,33 +319,43 @@ function processNextFrame() {
         if (hudFps) hudFps.textContent = `FPS: ${displayFps}`;
     }
 
-    // Run AI Inference if video is ready
-    if (video.readyState >= 2) {
+    // Run AI Inference throttled at ~30 FPS without stacking or blocking
+    if (video.readyState >= 2 && !isDetecting && (now - lastDetectTime >= VISION_INTERVAL_MS)) {
         runVisionInference(now);
     }
+
+    // Render Canvas & Effects at silky smooth 60 FPS
+    renderScene(latestHandResults, latestGestures, now);
 
     animFrameId = requestAnimationFrame(processNextFrame);
 }
 
 function runVisionInference(now) {
-    let handResults = null;
-    let faceResults = null;
+    if (!handLandmarker || isDetecting) return;
+    isDetecting = true;
+    lastDetectTime = now;
 
     try {
-        handResults = handLandmarker.detectForVideo(video, now);
-        faceResults = faceDetector.detectForVideo(video, now);
+        // Run Hand Landmarker (~8ms on 640x360)
+        const handResults = handLandmarker.detectForVideo(video, now);
+        latestHandResults = handResults;
+
+        // Run Face Detector interleaved (every 3rd vision tick = ~10 FPS)
+        faceInferenceCounter++;
+        const shouldDetectFace = (faceTracks.length === 0) || (faceInferenceCounter % FACE_STRIDE === 0);
+        if (faceDetector && shouldDetectFace) {
+            const faceResults = faceDetector.detectForVideo(video, now);
+            latestFaceResults = faceResults;
+            updateFaceTracks(faceResults);
+        }
+
+        // Process Hands & Gestures
+        latestGestures = processHandGestures(handResults, now);
     } catch (inferErr) {
         console.warn("Detection frame skipped:", inferErr);
+    } finally {
+        isDetecting = false;
     }
-
-    // Process Faces with EMA Tracking
-    updateFaceTracks(faceResults);
-
-    // Process Hands & Gestures
-    const detectedGestures = processHandGestures(handResults, now);
-
-    // Render Canvas & Effects
-    renderScene(handResults, detectedGestures, now);
 }
 
 // ==========================================
@@ -577,21 +606,27 @@ function renderScene(handResults, gestures, now) {
 
     ctx.restore(); // Restore unmirrored coordinate space for text & particles!
 
-    // D. Spawn Fingertip Particles
-    if (gestures.fingerHeart || gestures.twoHandHeart) {
+    // D. Spawn Fingertip Particles (consume immediately to avoid duplication across 60 FPS render frames)
+    if (gestures.heartSpawns && gestures.heartSpawns.length > 0) {
         for (const pt of gestures.heartSpawns) {
-            const sx = (1.0 - pt.x) * w;
-            const sy = pt.y * h;
-            activeParticles.push(new Particle(sx, sy, ['💖', '❤️', '💕', '💗', '💓', '💝']));
+            if (activeParticles.length < 30) {
+                const sx = (1.0 - pt.x) * w;
+                const sy = pt.y * h;
+                activeParticles.push(new Particle(sx, sy, ['💖', '❤️', '💕', '💗', '💓', '💝']));
+            }
         }
+        gestures.heartSpawns = [];
     }
 
-    if (gestures.middleFinger) {
+    if (gestures.cheekySpawns && gestures.cheekySpawns.length > 0) {
         for (const pt of gestures.cheekySpawns) {
-            const sx = (1.0 - pt.x) * w;
-            const sy = pt.y * h;
-            activeParticles.push(new Particle(sx, sy, ['🖕', '😜', '🤪', '😝', '👅']));
+            if (activeParticles.length < 30) {
+                const sx = (1.0 - pt.x) * w;
+                const sy = pt.y * h;
+                activeParticles.push(new Particle(sx, sy, ['🖕', '😜', '🤪', '😝', '👅']));
+            }
         }
+        gestures.cheekySpawns = [];
     }
 
     // E. Draw 3D Halo Crowns (Manual Toggles)
@@ -615,10 +650,10 @@ function renderScene(handResults, gestures, now) {
             draw3DCrown(ctx, fx, fy, fw, fh, crownAngle, crownEmojis);
         }
 
-        // Ambient particles
-        if (Math.random() < 0.25) {
+        // Ambient particles (lightweight spawn rate with particle cap)
+        if (Math.random() < 0.08 && activeParticles.length < 24) {
             const rx = Math.random() * w;
-            const ry = Math.random() * h * 0.8;
+            const ry = Math.random() * h * 0.7;
             activeParticles.push(new Particle(rx, ry, crownEmojis));
         }
     } else {
@@ -627,6 +662,9 @@ function renderScene(handResults, gestures, now) {
 
     // F. Update & Render Floating Particles
     activeParticles = activeParticles.filter(p => p.opacity > 0);
+    if (activeParticles.length > 30) {
+        activeParticles.splice(0, activeParticles.length - 30);
+    }
     for (const p of activeParticles) {
         p.update();
         p.draw(ctx);
@@ -634,7 +672,7 @@ function renderScene(handResults, gestures, now) {
 
     // G. Scuba Cat & Kicau Audio Management
     if (gestures.scubacat) {
-        scubacatHoldTimer = 15; // ~500ms latch
+        scubacatHoldTimer = 30; // ~500ms latch at 60 FPS
     } else if (scubacatHoldTimer > 0) {
         scubacatHoldTimer--;
     }

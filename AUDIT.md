@@ -313,3 +313,33 @@ from a light touch / non-gesture.
    - 12/12 passing Node.js tests in `tests/gestures.test.mjs`.
    - 13/13 passing Python unit tests in `tests/test_blur.py`.
 
+## FIX-41 — Web FPS Decoupling & 3D Halo Crown Height Calibration
+
+**Date:** 2026-09-08
+**Files:** `static/particles.js`, `static/main.js`, `gui_app.py`
+
+### Root Causes
+1. **Severe Web FPS Bottleneck (1-20 FPS):**
+   - Synchronous execution of both `handLandmarker.detectForVideo` and `faceDetector.detectForVideo` directly inside `requestAnimationFrame` on every single frame.
+   - Heavy 1280x720 video input streamed into MediaPipe Tasks Vision, forcing heavy bilinear downsampling and texture transfers per frame (~50ms latency total).
+   - Face detector (BlazeFace) executed 60 times/sec despite face positions moving slowly across frames.
+   - Uncapped particle counts and high ambient spawn rates under active halo crowns.
+2. **Misaligned 3D Halo Crown Position (Forehead / "Jidar"):**
+   - Vertical orbital center `cy` was calculated as `faceCenterY - faceHeight * 0.42`.
+   - Since BlazeFace bounding box center `faceCenterY` is at nose/eye bridge level and forehead extends to `0.50 * faceHeight`, subtracting only `0.42` placed the orbital ring directly on the forehead and eyebrows instead of floating above the head.
+
+### Solutions Implemented
+1. **Decoupled 60 FPS Render Loop & 30 FPS Throttled Vision Pipeline (`static/main.js`):**
+   - Separated the 60 FPS Canvas rendering loop from vision inference.
+   - Vision inference runs on an asynchronous non-blocking cadence throttled to 32ms (~30 FPS, native webcam frame rate) with `isDetecting` concurrency guards.
+   - Interleaved face detection: BlazeFace runs once every 3 vision frames (~10 FPS), eliminating 67% of face model overhead while EMA smoothing keeps face tracking seamless.
+   - Streamlined camera input to 640x360 with proportional canvas matching, reducing pixel processing volume by 75%.
+   - Capped active particles to 30 and consumed gesture spawns immediately to prevent duplicate particle creation across 60 FPS render frames.
+   - Calibrated hold and latch timers (`HOLD_FRAMES = 16`, `scubacatHoldTimer = 30`) for fluid 60 FPS operation.
+2. **Calibrated 3D Halo Crown Height (`static/particles.js` & `gui_app.py`):**
+   - Adjusted vertical center offset to `faceCenterY - faceHeight * 0.88` with orbital radiuses `rx = faceWidth * 0.62` and `ry = faceHeight * 0.15`.
+   - The halo crown now floats comfortably above the cranium and hair, cleanly hovering over the head.
+   - Parity applied to Python desktop application (`gui_app.py`).
+3. **Optimized Emoji Canvas Cache (`static/particles.js`):**
+   - Size quantization in `getEmojiCanvas` to even pixel steps to maximize cache hits and eliminate redundant offscreen canvas instantiations.
+

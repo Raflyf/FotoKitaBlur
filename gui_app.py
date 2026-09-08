@@ -713,10 +713,10 @@ class FotoKitaBlurApp:
 
             emojis = ['🖕', '😜', '🤪', '🖕', '😝', '👅'] if show_cheeky else ['💖', '❤️', '💕', '💗', '💓', '💝']
             fcx, fcy, fw, fh = self.tracked_face
-            rx = fw * w * 0.58
-            ry = fh * h * 0.12
+            rx = fw * w * 0.62
+            ry = fh * h * 0.15
             center_x = fcx * w
-            center_y = (fcy - fh * 0.42) * h
+            center_y = (fcy - fh * 0.88) * h
 
             # Depth perspective sorting
             halo_items = []

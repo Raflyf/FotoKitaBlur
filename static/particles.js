@@ -6,7 +6,7 @@ const emojiCanvasCache = new Map();
  * Pre-renders an emoji to an offscreen canvas for fast GPU-accelerated drawImage.
  */
 export function getEmojiCanvas(emoji, targetSize) {
-    const size = Math.max(12, Math.min(128, Math.round(targetSize)));
+    const size = Math.max(12, Math.min(128, Math.round(targetSize / 2) * 2));
     const key = `${emoji}_${size}`;
     let cached = emojiCanvasCache.get(key);
     if (cached) return cached;
@@ -66,16 +66,16 @@ export class Particle {
 }
 
 /**
- * Draws a perspective 3D rotating halo crown above a face.
+ * Draws a perspective 3D rotating halo crown hovering above the head.
  * Front emojis are scaled up and drawn last; back emojis are scaled down and drawn first.
  */
 export function draw3DCrown(ctx, faceCenterX, faceCenterY, faceWidth, faceHeight, crownAngle, emojis) {
     if (!emojis || emojis.length === 0) return;
 
     const numItems = 6;
-    const rx = faceWidth * 0.58;       // Horizontal orbital radius
-    const ry = faceHeight * 0.12;      // Vertical orbital radius (flattened perspective)
-    const cy = faceCenterY - faceHeight * 0.42; // Floating above head
+    const rx = faceWidth * 0.62;        // Horizontal orbital radius
+    const ry = faceHeight * 0.15;       // Vertical orbital radius (perspective tilt)
+    const cy = faceCenterY - faceHeight * 0.88; // Floating comfortably above top of head/hair
 
     // Compute items and sort by depth (Z-order)
     const items = [];
