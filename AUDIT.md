@@ -450,3 +450,33 @@ from a light touch / non-gesture.
    - Slight hand movements, resting hands, and head twitches are 100% rejected.
 3. **Parity Applied to Desktop Application (`gui_app.py`):**
    - Synced permanent toggle crown and robust wave history window to `gui_app.py`.
+
+## FIX-46 — Calibrated Stroke Accumulator & Leaky Bucket for Effortless Scuba Cat Triggering
+
+**Date:** 2026-09-08
+**Files:** `static/gestures.js`, `static/main.js`, `templates/index.html`, `gui_app.py`, `tests/gestures.test.mjs`
+
+### Root Causes of "Susah Ke-trigger"
+1. **Brittle Nose Hand Pose Checks:**
+   - Requiring middle and ring fingers to be folded (`isFisted`) caused frequent misses because MediaPipe HandLandmarker landmarks become distorted and foreshortened when a hand touches the face.
+   - The radius `face.w * 0.50` was too tight, failing when a user pinched the nostrils or bridge from the side.
+2. **Motion Blur Finger Extension Dropouts on Waving Hand:**
+   - Requiring extended index and middle fingers on the waving hand failed during rapid hand sweeps due to standard 30 FPS webcam motion blur.
+3. **Over-Constrained Reversal Sliding Window:**
+   - Requiring `xSpan > ySpan`, `xSpan >= face.w * 0.40`, and 2 reversals accumulating `0.020` each within 8-15 frames was physically too difficult to satisfy in real-time, failing on diagonal or curved arc waves.
+
+### Solutions Implemented
+1. **Generous Hand-at-Face Spatial Gating (`isHandAtFace`):**
+   - Evaluates wrist (0), palm (9), index tip (8), and thumb tip (4) against face center with an `0.85 * face.w` radius, accepting natural nose-pinching poses.
+   - Enforces physical separation: waving wrist must be separated from face (`> 0.45 * face.w`) and from the nose hand (`> 0.45 * face.w`).
+2. **Physics-Based Stroke Accumulator & Leaky Bucket Integrator (`updateScubaWaving`):**
+   - Jitter rejection: displacement `< 0.007` normalized units (sensor noise) is filtered out and decays energy.
+   - Dominant axis tracking: dynamically selects `primaryDelta` (horizontal or vertical component), supporting natural arc and tilted waving.
+   - Stroke travel threshold: direction reversals only award energy if the preceding stroke covered `>= 0.028` normalized units (~35px on 720p). Unidirectional drifts (mouse movement, reaching) never gain energy.
+   - Immediate responsiveness: a single valid reversal stroke awards `+24.0` energy, surpassing the `20.0` threshold to trigger Scuba Cat within ~200-300ms of natural hand waving.
+   - Graceful decay: decays smoothly at `-1.5` to `-2.0` per frame upon motion cessation, eliminating flickering.
+3. **Full Cross-Platform Parity:**
+   - Synced identical stroke accumulator and leaky bucket architecture to `gui_app.py`.
+4. **Comprehensive Test Suite & Cache Invalidation:**
+   - Added 5 new unit tests in `tests/gestures.test.mjs` covering jitter rejection, unidirectional drift rejection, hand-at-face gating, and waving oscillation (18/18 passing).
+   - Bumped cache buster to `?v=7` in `templates/index.html` and `static/main.js`.

@@ -1,7 +1,7 @@
 // Foto Kita Blur - Real-time AI Vision & Gesture Processing Engine
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended, isFingerFolded } from "./gestures.js?v=6";
-import { Particle, draw3DCrown } from "./particles.js?v=6";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended, isFingerFolded, isHandAtFace, updateScubaWaving } from "./gestures.js?v=7";
+import { Particle, draw3DCrown } from "./particles.js?v=7";
 
 // Global Vision Models & State
 let handLandmarker = null;
@@ -80,10 +80,14 @@ let peaceHoldTimer = 0;
 let scubacatHoldTimer = 0;
 let lastAppliedBlur = false;
 
-// Scuba Cat / Robust Sliding-Window Waving Integrator
-let wavingEnergy = 0;
-let waveWristHistory = [];
-const WAVE_WINDOW = 15;
+// Scuba Cat / Calibrated Waving Integrator State
+let scubaWaveState = {
+    energy: 0,
+    lastX: null,
+    lastY: null,
+    strokeDir: 0,
+    strokeDist: 0
+};
 
 // Real-time 60 FPS Render & Throttled Vision State
 let fpsCounter = 0;
@@ -315,6 +319,7 @@ function stopCamera() {
     faceTracks = [];
     activeParticles = [];
     waveWristHistory = [];
+    lastWaveDir = 0;
 
     // Reset Scuba Cat & Audio
     if (catVideoEl) catVideoEl.style.display = 'none';
@@ -540,107 +545,41 @@ function processHandGestures(handResults, now) {
     }
 
     // E. Check Scuba Cat / Waving Gestures
-    // Hand 1 must be PINCHING/HOLDING nose, Hand 2 must be an OPEN PALM waving horizontally
+    // Hand 1 must be near face (nose area), Hand 2 separated and waving
     if (faceTracks.length > 0 && hands.length >= 2) {
         let noseHandIdx = -1;
 
-        // 1. Identify which hand is holding/pinching the nose
+        // 1. Identify which hand is near the face (nose/mouth area)
         for (let i = 0; i < hands.length; i++) {
-            const h = hands[i];
-            for (const face of faceTracks) {
-                // Fingertip 8 (index) or 4 (thumb) must be close to face center (nose area)
-                const distTip8 = Math.hypot(h[8].x - face.x, h[8].y - face.y);
-                const distTip4 = Math.hypot(h[4].x - face.x, h[4].y - face.y);
-                const atNose = Math.min(distTip8, distTip4) < face.w * 0.50;
-
-                // Nose hand must be a fist/pinch: middle and ring fingers folded into palm
-                const isFisted = isFingerFolded(h, 9, 10, 12) && isFingerFolded(h, 13, 14, 16);
-
-                if (atNose && isFisted) {
-                    noseHandIdx = i;
-                    break;
-                }
+            if (isHandAtFace(hands[i], faceTracks[0])) {
+                noseHandIdx = i;
+                break;
             }
-            if (noseHandIdx !== -1) break;
         }
 
-        // 2. If a nose-holding hand is found, check the other hand for open-palm horizontal waving
+        // 2. If a hand is at the face, update waving integrator on the other hand
         if (noseHandIdx !== -1) {
             const waveHandIdx = noseHandIdx === 0 ? 1 : 0;
-            const waveHand = hands[waveHandIdx];
-            const waveWrist = waveHand[0];
+            const waveWrist = hands[waveHandIdx][0];
+            const noseWrist = hands[noseHandIdx][0];
+            const face = faceTracks[0];
 
-            // Waving hand must be OPEN (index and middle fingers extended)
-            const isWaveOpen = isFingerExtended(waveHand, 5, 6, 8) && isFingerExtended(waveHand, 9, 10, 12);
-
-            if (isWaveOpen) {
-                waveWristHistory.push({ x: waveWrist.x, y: waveWrist.y });
-                if (waveWristHistory.length > WAVE_WINDOW) {
-                    waveWristHistory.shift();
-                }
-
-                if (waveWristHistory.length >= 8) {
-                    let minX = 1.0, maxX = 0.0;
-                    let minY = 1.0, maxY = 0.0;
-                    for (const pt of waveWristHistory) {
-                        if (pt.x < minX) minX = pt.x;
-                        if (pt.x > maxX) maxX = pt.x;
-                        if (pt.y < minY) minY = pt.y;
-                        if (pt.y > maxY) maxY = pt.y;
-                    }
-                    const xSpan = maxX - minX;
-                    const ySpan = maxY - minY;
-
-                    // Direction reversal counting with noise deadband
-                    let reversals = 0;
-                    let confirmedDir = 0;
-                    let accum = 0;
-                    const STEP_THRESHOLD = 0.020;
-
-                    for (let k = 1; k < waveWristHistory.length; k++) {
-                        const dx = waveWristHistory[k].x - waveWristHistory[k - 1].x;
-                        const dir = dx > 0.003 ? 1 : (dx < -0.003 ? -1 : 0);
-                        if (dir === 0) continue;
-
-                        if (confirmedDir === 0) {
-                            confirmedDir = dir;
-                            accum = Math.abs(dx);
-                        } else if (dir !== confirmedDir) {
-                            accum += Math.abs(dx);
-                            if (accum >= STEP_THRESHOLD) {
-                                reversals++;
-                                confirmedDir = dir;
-                                accum = 0;
-                            }
-                        } else {
-                            accum += Math.abs(dx);
-                        }
-                    }
-
-                    // Deliberate horizontal wave: horizontal motion dominates, wide sweep, >=2 reversals
-                    const isConfirmedWave = (xSpan > ySpan) && (xSpan >= faceTracks[0].w * 0.40) && (reversals >= 2);
-
-                    if (isConfirmedWave) {
-                        wavingEnergy = Math.min(100, wavingEnergy + 30);
-                    } else {
-                        wavingEnergy = Math.max(0, wavingEnergy - 4);
-                    }
-                }
-            } else {
-                wavingEnergy = Math.max(0, wavingEnergy - 5);
-                if (waveWristHistory.length > 0) waveWristHistory.shift();
-            }
-
-            if (wavingEnergy >= 30) {
+            const waveRes = updateScubaWaving(scubaWaveState, waveWrist, face, noseWrist);
+            scubaWaveState = waveRes.state;
+            if (waveRes.isWaving) {
                 gestures.scubacat = true;
             }
         } else {
-            wavingEnergy = Math.max(0, wavingEnergy - 6);
-            waveWristHistory = [];
+            scubaWaveState.energy = Math.max(0, scubaWaveState.energy - 2.0);
+            scubaWaveState.lastX = null;
+            scubaWaveState.strokeDist = 0;
+            scubaWaveState.strokeDir = 0;
         }
     } else {
-        wavingEnergy = Math.max(0, wavingEnergy - 6);
-        waveWristHistory = [];
+        scubaWaveState.energy = Math.max(0, scubaWaveState.energy - 2.0);
+        scubaWaveState.lastX = null;
+        scubaWaveState.strokeDist = 0;
+        scubaWaveState.strokeDir = 0;
     }
 
     return gestures;

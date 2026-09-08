@@ -3,7 +3,7 @@
 // Run: node --test tests/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart } from "../static/gestures.js";
+import { isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isHandAtFace, updateScubaWaving } from "../static/gestures.js";
 
 // Landmark ids used by gestures.js (MediaPipe hand map)
 const THUMB_T = 4, INDEX_PIP = 6, INDEX_T = 8, MIDDLE_MCP = 9,
@@ -133,4 +133,71 @@ test("two hand heart rejected when tips are far apart", () => {
         4: [0.90, -0.20],
     });
     assert.equal(isTwoHandHeart(leftHand, rightHand), null);
+});
+
+test("isHandAtFace detects hand near face center", () => {
+    const hand = makeHand({
+        0: [0.50, 0.48], // Wrist at face
+        8: [0.50, 0.45], // Index tip at nose
+    });
+    const face = { x: 0.50, y: 0.45, w: 0.25, h: 0.25 };
+    assert.equal(isHandAtFace(hand, face), true);
+});
+
+test("isHandAtFace rejects hand far away from face", () => {
+    const hand = makeHand({
+        0: [0.10, 0.80],
+        8: [0.10, 0.70],
+    });
+    const face = { x: 0.50, y: 0.45, w: 0.25, h: 0.25 };
+    assert.equal(isHandAtFace(hand, face), false);
+});
+
+test("updateScubaWaving rejects stationary camera jitter", () => {
+    let state = null;
+    const face = { x: 0.50, y: 0.45, w: 0.25, h: 0.25 };
+    const noseWrist = { x: 0.50, y: 0.45 };
+    let triggered = false;
+
+    for (let f = 0; f < 30; f++) {
+        const jitter = (Math.random() - 0.5) * 0.006;
+        const waveWrist = { x: 0.75 + jitter, y: 0.50 + jitter };
+        const res = updateScubaWaving(state, waveWrist, face, noseWrist);
+        state = res.state;
+        if (res.isWaving) triggered = true;
+    }
+    assert.equal(triggered, false);
+});
+
+test("updateScubaWaving rejects unidirectional drift", () => {
+    let state = null;
+    const face = { x: 0.50, y: 0.45, w: 0.25, h: 0.25 };
+    const noseWrist = { x: 0.50, y: 0.45 };
+    let triggered = false;
+
+    for (let f = 0; f < 30; f++) {
+        const waveWrist = { x: 0.65 + f * 0.008, y: 0.50 };
+        const res = updateScubaWaving(state, waveWrist, face, noseWrist);
+        state = res.state;
+        if (res.isWaving) triggered = true;
+    }
+    assert.equal(triggered, false);
+});
+
+test("updateScubaWaving triggers reliably on back-and-forth waving", () => {
+    let state = null;
+    const face = { x: 0.50, y: 0.45, w: 0.25, h: 0.25 };
+    const noseWrist = { x: 0.50, y: 0.45 };
+    let triggeredCount = 0;
+
+    for (let f = 0; f < 30; f++) {
+        const waveWrist = {
+            x: 0.75 + 0.06 * Math.sin((f / 10) * 2 * Math.PI),
+            y: 0.50 + 0.01 * Math.cos((f / 10) * 2 * Math.PI)
+        };
+        const res = updateScubaWaving(state, waveWrist, face, noseWrist);
+        state = res.state;
+        if (res.isWaving) triggeredCount++;
+    }
+    assert.ok(triggeredCount >= 15, `Expected >= 15 triggered frames, got ${triggeredCount}`);
 });

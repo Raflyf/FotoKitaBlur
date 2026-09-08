@@ -204,8 +204,10 @@ class FotoKitaBlurApp:
         self.peace_hold_frames = 0
         self.scubacat_hold_frames = 0
         self.waving_energy = 0.0
-        self.last_wrist_x = None
-        self.last_dir = 0
+        self.last_wave_wrist_x = None
+        self.last_wave_wrist_y = None
+        self.wave_stroke_dir = 0
+        self.wave_stroke_dist = 0.0
 
         # Face tracking smoothing (EMA)
         self.tracked_face = None  # (cx, cy, w, h)
@@ -215,7 +217,6 @@ class FotoKitaBlurApp:
         self.particles = []
         self.crown_angle = 0.0
         self.last_crown_time = time.perf_counter()
-        self.wave_history = []
 
         # Load Scuba Cat GIF frames
         self.cat_frames = []
@@ -626,78 +627,77 @@ class FotoKitaBlurApp:
                 fcx, fcy, fw, fh = self.tracked_face
                 nose_hand_idx = -1
 
+                # 1. Identify which hand is near the face (nose/mouth area)
                 for i, hand in enumerate(hands_landmarks):
                     hl = hand.landmark
-                    # Fingertip 8 or 4 close to face center (nose area)
-                    dist_tip8 = math.hypot(hl[8].x - fcx, hl[8].y - fcy)
-                    dist_tip4 = math.hypot(hl[4].x - fcx, hl[4].y - fcy)
-                    at_nose = min(dist_tip8, dist_tip4) < fw * 0.50
-                    # Nose hand must be fisted/pinched (middle & ring folded into palm)
-                    is_fisted = (
-                        not is_finger_extended(hl, 9, 10, 12) and
-                        not is_finger_extended(hl, 13, 14, 16)
-                    )
-                    if at_nose and is_fisted:
+                    # Check key hand landmarks: wrist(0), palm(9), index tip(8), thumb tip(4)
+                    d0 = math.hypot(hl[0].x - fcx, hl[0].y - fcy)
+                    d9 = math.hypot(hl[9].x - fcx, hl[9].y - fcy)
+                    d8 = math.hypot(hl[8].x - fcx, hl[8].y - fcy)
+                    d4 = math.hypot(hl[4].x - fcx, hl[4].y - fcy)
+                    min_dist = min(d0, d9, d8, d4)
+                    if min_dist < fw * 0.85:
                         nose_hand_idx = i
                         break
 
+                # 2. If hand is at face, update waving integrator on the other hand
                 if nose_hand_idx != -1:
                     wave_hand = hands_landmarks[0 if nose_hand_idx == 1 else 1].landmark
-                    # Waving hand must be OPEN (index and middle fingers extended)
-                    wave_open = (
-                        is_finger_extended(wave_hand, 5, 6, 8) and
-                        is_finger_extended(wave_hand, 9, 10, 12)
-                    )
-                    if wave_open:
-                        wave_wrist = wave_hand[0]
-                        self.wave_history.append((wave_wrist.x, wave_wrist.y))
-                        if len(self.wave_history) > 15:
-                            self.wave_history.pop(0)
+                    nose_wrist = hands_landmarks[nose_hand_idx].landmark[0]
+                    wave_wrist = wave_hand[0]
 
-                        if len(self.wave_history) >= 8:
-                            xs = [pt[0] for pt in self.wave_history]
-                            ys = [pt[1] for pt in self.wave_history]
-                            x_span = max(xs) - min(xs)
-                            y_span = max(ys) - min(ys)
+                    # Separation checks: waving hand is away from face and away from nose hand
+                    dist_wave_face = math.hypot(wave_wrist.x - fcx, wave_wrist.y - fcy)
+                    dist_between_hands = math.hypot(wave_wrist.x - nose_wrist.x, wave_wrist.y - nose_wrist.y)
 
-                            reversals = 0
-                            confirmed_dir = 0
-                            accum = 0.0
-                            for k in range(1, len(self.wave_history)):
-                                dx = self.wave_history[k][0] - self.wave_history[k - 1][0]
-                                d = 1 if dx > 0.003 else (-1 if dx < -0.003 else 0)
-                                if d == 0:
-                                    continue
-                                if confirmed_dir == 0:
-                                    confirmed_dir = d
-                                    accum = abs(dx)
-                                elif d != confirmed_dir:
-                                    accum += abs(dx)
-                                    if accum >= 0.020:
-                                        reversals += 1
-                                        confirmed_dir = d
-                                        accum = 0.0
+                    if dist_wave_face > fw * 0.45 and dist_between_hands > fw * 0.45:
+                        if self.last_wave_wrist_x is None:
+                            self.last_wave_wrist_x = wave_wrist.x
+                            self.last_wave_wrist_y = wave_wrist.y
+
+                        dx = wave_wrist.x - self.last_wave_wrist_x
+                        dy = wave_wrist.y - self.last_wave_wrist_y
+                        self.last_wave_wrist_x = wave_wrist.x
+                        self.last_wave_wrist_y = wave_wrist.y
+
+                        dist = math.hypot(dx, dy)
+                        if dist < 0.007:
+                            self.waving_energy = max(0.0, self.waving_energy - 1.5)
+                            self.wave_stroke_dist *= 0.85
+                        else:
+                            primary_delta = dx if abs(dx) >= abs(dy) else dy
+                            d = 1 if primary_delta > 0.004 else (-1 if primary_delta < -0.004 else 0)
+                            if d != 0:
+                                if self.wave_stroke_dir == 0:
+                                    self.wave_stroke_dir = d
+                                    self.wave_stroke_dist = abs(primary_delta)
+                                elif d == self.wave_stroke_dir:
+                                    self.wave_stroke_dist += abs(primary_delta)
                                 else:
-                                    accum += abs(dx)
-
-                            is_confirmed_wave = (x_span > y_span) and (x_span >= fw * 0.40) and (reversals >= 2)
-                            if is_confirmed_wave:
-                                self.waving_energy = min(100.0, self.waving_energy + 30.0)
-                            else:
-                                self.waving_energy = max(0.0, self.waving_energy - 4.0)
+                                    # Direction reversed!
+                                    min_stroke = min(fw * 0.15, 0.028)
+                                    if self.wave_stroke_dist >= min_stroke:
+                                        self.waving_energy = min(100.0, self.waving_energy + 24.0)
+                                    self.wave_stroke_dir = d
+                                    self.wave_stroke_dist = abs(primary_delta)
                     else:
-                        self.waving_energy = max(0.0, self.waving_energy - 5.0)
-                        if self.wave_history:
-                            self.wave_history.pop(0)
-
-                    if self.waving_energy >= 30.0:
-                        self.scubacat_hold_frames = 20
+                        self.waving_energy = max(0.0, self.waving_energy - 2.0)
+                        self.last_wave_wrist_x = None
+                        self.wave_stroke_dist = 0.0
+                        self.wave_stroke_dir = 0
                 else:
-                    self.waving_energy = max(0.0, self.waving_energy - 6.0)
-                    self.wave_history = []
+                    self.waving_energy = max(0.0, self.waving_energy - 2.0)
+                    self.last_wave_wrist_x = None
+                    self.wave_stroke_dist = 0.0
+                    self.wave_stroke_dir = 0
             else:
-                self.waving_energy = max(0.0, self.waving_energy - 6.0)
-                self.wave_history = []
+                self.waving_energy = max(0.0, self.waving_energy - 2.0)
+                self.last_wave_wrist_x = None
+                self.wave_stroke_dist = 0.0
+                self.wave_stroke_dir = 0
+
+            if self.waving_energy >= 20.0:
+                self.scubacat_hold_frames = 20
         else:
             for lbl in self.diag_badges.values():
                 lbl.config(text="FOLDED", fg="#5f5f6e")

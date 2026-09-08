@@ -180,3 +180,84 @@ export function isTwoHandHeart(l1, l2) {
 
     return null;
 }
+
+/**
+ * Identifies if a hand is holding/touching the face/nose area.
+ * Checks wrist, palm center, index tip, and thumb tip against face center.
+ */
+export function isHandAtFace(handLandmarks, face) {
+    if (!handLandmarks || !face) return false;
+    const d0 = Math.hypot(handLandmarks[0].x - face.x, handLandmarks[0].y - face.y);
+    const d9 = Math.hypot(handLandmarks[9].x - face.x, handLandmarks[9].y - face.y);
+    const d8 = Math.hypot(handLandmarks[8].x - face.x, handLandmarks[8].y - face.y);
+    const d4 = Math.hypot(handLandmarks[4].x - face.x, handLandmarks[4].y - face.y);
+    return Math.min(d0, d9, d8, d4) < face.w * 0.85;
+}
+
+/**
+ * Calibrated Scuba Cat Waving Motion Integrator.
+ * Filters camera jitter and unidirectional drift, triggering on intentional back-and-forth oscillation.
+ */
+export function updateScubaWaving(state, waveWrist, face, noseWrist) {
+    if (!state) {
+        state = {
+            energy: 0,
+            lastX: null,
+            lastY: null,
+            strokeDir: 0,
+            strokeDist: 0
+        };
+    }
+
+    // Separation checks: waving hand is away from face and away from nose hand
+    const distWaveFace = Math.hypot(waveWrist.x - face.x, waveWrist.y - face.y);
+    const distBetweenHands = Math.hypot(waveWrist.x - noseWrist.x, waveWrist.y - noseWrist.y);
+
+    if (distWaveFace <= face.w * 0.45 || distBetweenHands <= face.w * 0.45) {
+        state.energy = Math.max(0, state.energy - 2.0);
+        state.lastX = null;
+        state.strokeDist = 0;
+        state.strokeDir = 0;
+        return { isWaving: state.energy >= 20, state };
+    }
+
+    if (state.lastX === null) {
+        state.lastX = waveWrist.x;
+        state.lastY = waveWrist.y;
+    }
+
+    const dx = waveWrist.x - state.lastX;
+    const dy = waveWrist.y - state.lastY;
+    state.lastX = waveWrist.x;
+    state.lastY = waveWrist.y;
+
+    const dist = Math.hypot(dx, dy);
+
+    // Deadband: webcam micro-jitter (<0.007 normalized units)
+    if (dist < 0.007) {
+        state.energy = Math.max(0, state.energy - 1.5);
+        state.strokeDist *= 0.85;
+    } else {
+        // Dominant axis displacement (handles horizontal and slight arc/diagonal wave)
+        const primaryDelta = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+        const dir = primaryDelta > 0.004 ? 1 : (primaryDelta < -0.004 ? -1 : 0);
+        if (dir !== 0) {
+            if (state.strokeDir === 0) {
+                state.strokeDir = dir;
+                state.strokeDist = Math.abs(primaryDelta);
+            } else if (dir === state.strokeDir) {
+                state.strokeDist += Math.abs(primaryDelta);
+            } else {
+                // Direction reversed! Check if previous stroke traveled a meaningful distance
+                const minStroke = Math.min(face.w * 0.15, 0.028);
+                if (state.strokeDist >= minStroke) {
+                    state.energy = Math.min(100, state.energy + 24.0);
+                }
+                state.strokeDir = dir;
+                state.strokeDist = Math.abs(primaryDelta);
+            }
+        }
+    }
+
+    return { isWaving: state.energy >= 20, state };
+}
