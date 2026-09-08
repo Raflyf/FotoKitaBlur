@@ -278,7 +278,7 @@ async function startCamera() {
         // Start High-FPS Synchronized Render Loop
         lastCrownTime = performance.now();
         lastFpsTime = performance.now();
-        lastDetectTime = 0;
+        nextDetectTime = 0;
         faceInferenceCounter = 0;
         fpsCounter = 0;
         animFrameId = requestAnimationFrame(processNextFrame);
