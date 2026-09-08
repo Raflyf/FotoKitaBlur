@@ -1,7 +1,7 @@
 // Foto Kita Blur - Real-time AI Vision & Gesture Processing Engine
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended } from "./gestures.js?v=3";
-import { Particle, draw3DCrown } from "./particles.js?v=3";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended } from "./gestures.js?v=4";
+import { Particle, draw3DCrown } from "./particles.js?v=4";
 
 // Global Vision Models & State
 let handLandmarker = null;

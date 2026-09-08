@@ -374,4 +374,23 @@ from a light touch / non-gesture.
    - In `processHandGestures()`, evaluated middle finger across all hands first; if any hand displays middle finger, peace gesture is strictly suppressed.
    - Added regression test cases to `tests/gestures.test.mjs` and `tests/test_blur.py`.
 
+## FIX-43 — Browser Module Cache Busting and Server Auto-Reload Hardening
 
+**Date:** 2026-09-08
+**Files:** `app.py`, `templates/index.html`, `static/main.js`
+
+### Root Causes
+1. **Module Script Caching on Camera Initialization Failure:**
+   - Prior to commit `f0d5876`, an unhandled reference to `lastDetectTime = 0;` caused a runtime `ReferenceError` during camera startup in strict ES module execution.
+   - Because Flask was configured with default caching (`SEND_FILE_MAX_AGE_DEFAULT = 43200`) and Jinja template caching was active (`TEMPLATES_AUTO_RELOAD = False`), the previous template without updated cache-busting version query strings was retained in server memory.
+   - Chrome's V8 module script cache and HTTP disk cache continued serving the stale `main.js` file despite normal user page refreshes, reproducing the `lastDetectTime is not defined` alert.
+
+### Solutions Implemented
+1. **Disabled Server-Side Static and Template Caching (`app.py`):**
+   - Configured `TEMPLATES_AUTO_RELOAD = True` and `SEND_FILE_MAX_AGE_DEFAULT = 0`.
+   - Appended `Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, and `Expires: 0` headers to all responses in `set_security_headers`.
+2. **Synchronized Cache Buster Query Parameters:**
+   - Incremented module script tag to `src="{{ url_for('static', filename='main.js') }}?v=4"` in `templates/index.html`.
+   - Updated ES module import query strings in `static/main.js` to `./gestures.js?v=4` and `./particles.js?v=4`.
+3. **Clean Process Re-initialization:**
+   - Terminated legacy background process and restarted Flask cleanly via the target virtual environment Python binary.
