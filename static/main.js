@@ -213,28 +213,52 @@ async function startCamera() {
     btnToggle.textContent = 'Menghubungkan Kamera...';
 
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                width: { ideal: 640 },
-                height: { ideal: 360 },
-                facingMode: 'user'
-            },
-            audio: false
-        });
+        let stream = null;
+        let lastErr = null;
+
+        // Multi-tier constraint fallback: 720p ideal -> 480p ideal -> raw video:true
+        const constraintTiers = [
+            { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+            { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+            { video: true, audio: false }
+        ];
+
+        for (const constraints of constraintTiers) {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                if (stream) break;
+            } catch (tierErr) {
+                lastErr = tierErr;
+                console.warn("Retrying with next camera constraint tier:", tierErr);
+            }
+        }
+
+        if (!stream) {
+            throw lastErr || new Error("Tidak dapat mengakses aliran kamera.");
+        }
 
         mediaStream = stream;
         video.srcObject = stream;
 
+        // Safely wait for video metadata with timeout guard
         await new Promise((resolve) => {
-            video.onloadedmetadata = () => {
-                video.play();
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+                resolve();
+                return;
+            }
+            const onLoaded = () => {
+                video.removeEventListener('loadedmetadata', onLoaded);
                 resolve();
             };
+            video.addEventListener('loadedmetadata', onLoaded);
+            setTimeout(resolve, 1000);
         });
+
+        await video.play().catch(e => console.warn("video.play warning:", e));
 
         // Set matching lightweight resolution for high-performance canvas
         let vw = video.videoWidth || 640;
-        let vh = video.videoHeight || 360;
+        let vh = video.videoHeight || 480;
         const targetWidth = 640;
         const scale = Math.min(1.0, targetWidth / vw);
         canvas.width = Math.round(vw * scale);
@@ -261,7 +285,17 @@ async function startCamera() {
 
     } catch (err) {
         console.error("Gagal membuka kamera:", err);
-        alert("Tidak dapat mengakses kamera. Pastikan izin kamera telah diberikan.");
+
+        let userMsg = "Tidak dapat mengakses kamera: " + (err.message || err.name);
+        if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+            userMsg = "Kamera sedang digunakan oleh proses lain (misal aplikasi GUI / Zoom / Discord / tab lain). Mohon tutup aplikasi tersebut lalu coba lagi.";
+        } else if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+            userMsg = "Izin kamera ditolak di browser. Pastikan izin kamera telah diberikan di ikon gembok pada URL bar.";
+        } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+            userMsg = "Perangkat kamera tidak ditemukan. Pastikan webcam terhubung.";
+        }
+
+        alert(userMsg);
         btnToggle.disabled = false;
         btnToggle.textContent = 'Nyalakan Kamera';
         btnToggle.className = 'btn btn-flex btn-primary';
