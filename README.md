@@ -21,15 +21,20 @@ untuk melihat penjelasan tiap gestur.
 
 ## Menjalankan
 
+### 1. Versi Desktop GUI Popup (Native Python - Rekomendasi)
+```bash
+python gui_app.py
+```
+Aplikasi GUI desktop native lengkap dengan video webcam, efek partikel emoji, audio musik dan Scuba Cat, slider blur dan sensitivity, serta panel Kamus Gestur.
+
+### 2. Versi Web Browser
 ```bash
 pip install -r requirements.txt
 python app.py
 ```
+Buka http://127.0.0.1:5000, izinkan akses kamera, klik **Nyalakan Kamera**.
 
-Buka http://127.0.0.1:5000, izinkan akses kamera, klik **Start Camera**.
-
-CLI:
-
+### 3. Versi CLI Minimalis
 ```bash
 python blur.py
 ```
