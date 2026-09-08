@@ -2,7 +2,7 @@
 
 Full Python native desktop application with integrated camera feed,
 OpenCV/MediaPipe gesture recognition, animated emoji particles,
-3D rotating halo crowns, Scuba Cat PiP overlay, and native audio playback.
+3D rotating halo crowns, Scuba Cat PiP overlay, and sample-accurate audio playback.
 """
 
 import ctypes
@@ -40,22 +40,43 @@ except Exception:
 
 
 class AudioController:
-    """Manages audio playback via Windows Multimedia MCI API without external dependencies."""
+    """Manages audio playback via Windows Media Player (OCX) with millisecond VBR accuracy and fallback to MCI."""
 
     def __init__(self, base_dir):
         self.base_dir = Path(base_dir)
-        self.music_path = self.base_dir / "media" / "music" / "foto-kita-blur.mp3"
-        self.kicau_path = self.base_dir / "media" / "music" / "kicau-mania.mp3"
+        self.music_path = (self.base_dir / "media" / "music" / "foto-kita-blur.mp3").resolve()
+        self.kicau_path = (self.base_dir / "media" / "music" / "kicau-mania.mp3").resolve()
 
-        self.is_music_open = False
-        self.is_kicau_open = False
+        self.use_wmp = False
+        self.wmp_bgm = None
+        self.wmp_kicau = None
         self.is_music_playing = False
         self.is_kicau_playing = False
 
-        self._lock = threading.Lock()
-        self._running = True
-        self._monitor_thread = threading.Thread(target=self._audio_loop_monitor, daemon=True)
-        self._monitor_thread.start()
+        # Attempt to initialize Windows Media Player COM object for sample-accurate VBR MP3 playback
+        try:
+            import win32com.client
+            import pythoncom
+            pythoncom.CoInitialize()
+
+            if self.music_path.exists():
+                self.wmp_bgm = win32com.client.Dispatch("WMPlayer.OCX")
+                self.wmp_bgm.settings.autoStart = False
+                self.wmp_bgm.settings.volume = 100
+                self.wmp_bgm.currentMedia = self.wmp_bgm.newMedia(str(self.music_path))
+
+            if self.kicau_path.exists():
+                self.wmp_kicau = win32com.client.Dispatch("WMPlayer.OCX")
+                self.wmp_kicau.settings.autoStart = False
+                self.wmp_kicau.settings.volume = 100
+                self.wmp_kicau.currentMedia = self.wmp_kicau.newMedia(str(self.kicau_path))
+
+            self.use_wmp = True
+        except Exception as e:
+            print("WMP OCX unavailable, falling back to MCI:", e)
+            self.use_wmp = False
+            self.is_music_open = False
+            self.is_kicau_open = False
 
     def _mci(self, cmd):
         try:
@@ -75,72 +96,190 @@ class AudioController:
         return 0
 
     def play_music(self):
-        with self._lock:
-            if not self.music_path.exists():
-                return False
-            if not self.is_music_open:
-                p = str(self.music_path.resolve())
-                self._mci(f'open "{p}" type mpegvideo alias bgm')
-                self._mci('set bgm time format milliseconds')
-                self.is_music_open = True
+        if self.use_wmp and self.wmp_bgm:
+            try:
+                self.wmp_bgm.controls.currentPosition = 23.0
+                self.wmp_bgm.controls.play()
+                self.is_music_playing = True
+                return True
+            except Exception as e:
+                print("WMP BGM play error:", e)
 
-            # Start at 23 seconds (23000 ms)
-            self._mci('play bgm from 23000')
-            self.is_music_playing = True
-            return True
+        # MCI fallback
+        if not self.music_path.exists():
+            return False
+        if not getattr(self, "is_music_open", False):
+            p = str(self.music_path)
+            self._mci(f'open "{p}" type mpegvideo alias bgm')
+            self._mci('set bgm time format milliseconds')
+            self.is_music_open = True
+
+        self._mci('play bgm from 23000')
+        self.is_music_playing = True
+        return True
 
     def stop_music(self):
-        with self._lock:
-            if self.is_music_open:
-                self._mci('stop bgm')
+        if self.use_wmp and self.wmp_bgm and self.is_music_playing:
+            try:
+                self.wmp_bgm.controls.stop()
+            except Exception:
+                pass
+            self.is_music_playing = False
+        elif getattr(self, "is_music_open", False):
+            self._mci('stop bgm')
             self.is_music_playing = False
 
     def play_kicau(self):
-        with self._lock:
-            if not self.kicau_path.exists() or self.is_kicau_playing:
-                return
-            if not self.is_kicau_open:
-                p = str(self.kicau_path.resolve())
-                self._mci(f'open "{p}" type mpegvideo alias kicau')
-                self._mci('set kicau time format milliseconds')
-                self.is_kicau_open = True
+        if self.is_kicau_playing:
+            return
 
-            # Seek to 2:13 (133000 ms)
-            self._mci('play kicau from 133000')
-            self.is_kicau_playing = True
+        if self.use_wmp and self.wmp_kicau:
+            try:
+                # Seek to 2:13 (133.0 seconds) exactly matching web audio
+                self.wmp_kicau.controls.currentPosition = 133.0
+                self.wmp_kicau.controls.play()
+                self.is_kicau_playing = True
+                return
+            except Exception as e:
+                print("WMP Kicau play error:", e)
+
+        # MCI fallback
+        if not self.kicau_path.exists():
+            return
+        if not getattr(self, "is_kicau_open", False):
+            p = str(self.kicau_path)
+            self._mci(f'open "{p}" type mpegvideo alias kicau')
+            self._mci('set kicau time format milliseconds')
+            self.is_kicau_open = True
+
+        self._mci('play kicau from 133000')
+        self.is_kicau_playing = True
 
     def stop_kicau(self):
-        with self._lock:
-            if self.is_kicau_open and self.is_kicau_playing:
-                self._mci('pause kicau')
-                self.is_kicau_playing = False
+        if not self.is_kicau_playing:
+            return
 
-    def _audio_loop_monitor(self):
-        while self._running:
-            time.sleep(0.1)
-            # Loop bgm between 23s and 52s (23000 - 52000 ms)
-            if self.is_music_playing and self.is_music_open:
+        if self.use_wmp and self.wmp_kicau:
+            try:
+                self.wmp_kicau.controls.pause()
+            except Exception:
+                pass
+            self.is_kicau_playing = False
+        elif getattr(self, "is_kicau_open", False):
+            self._mci('pause kicau')
+            self.is_kicau_playing = False
+
+    def check_loops(self):
+        """Called periodically by Tkinter main thread to loop audio seamlessly."""
+        if self.use_wmp:
+            # BGM loop between 23.0s and 52.0s
+            if self.is_music_playing and self.wmp_bgm:
+                try:
+                    pos = self.wmp_bgm.controls.currentPosition
+                    if pos >= 52.0 or pos < 22.0:
+                        self.wmp_bgm.controls.currentPosition = 23.0
+                except Exception:
+                    pass
+
+            # Kicau loop between 133.0s and 146.0s
+            if self.is_kicau_playing and self.wmp_kicau:
+                try:
+                    pos = self.wmp_kicau.controls.currentPosition
+                    if pos >= 146.0 or pos < 132.0:
+                        self.wmp_kicau.controls.currentPosition = 133.0
+                except Exception:
+                    pass
+        else:
+            # MCI fallback
+            if self.is_music_playing and getattr(self, "is_music_open", False):
                 pos = self._get_position_ms("bgm")
                 if pos >= 52000 or pos < 22000:
-                    with self._lock:
-                        self._mci('play bgm from 23000')
+                    self._mci('play bgm from 23000')
 
-            # Loop kicau between 133s and 146s (133000 - 146000 ms)
-            if self.is_kicau_playing and self.is_kicau_open:
+            if self.is_kicau_playing and getattr(self, "is_kicau_open", False):
                 pos = self._get_position_ms("kicau")
                 if pos >= 146000 or pos < 132000:
-                    with self._lock:
-                        self._mci('play kicau from 133000')
+                    self._mci('play kicau from 133000')
 
     def cleanup(self):
-        self._running = False
-        with self._lock:
-            if self.is_music_open:
+        if self.use_wmp:
+            if self.wmp_bgm:
+                try:
+                    self.wmp_bgm.controls.stop()
+                    self.wmp_bgm.close()
+                except Exception:
+                    pass
+            if self.wmp_kicau:
+                try:
+                    self.wmp_kicau.controls.stop()
+                    self.wmp_kicau.close()
+                except Exception:
+                    pass
+        else:
+            if getattr(self, "is_music_open", False):
                 self._mci('close bgm')
                 self.is_music_open = False
-            if self.is_kicau_open:
+            if getattr(self, "is_kicau_open", False):
                 self._mci('close kicau')
                 self.is_kicau_open = False
+
+
+class CameraReader:
+    """Threaded camera capture to eliminate frame-grab blocking on the UI thread."""
+
+    def __init__(self, device_index=0, width=1280, height=720):
+        self.device_index = device_index
+        self.width = width
+        self.height = height
+        self.cap = None
+        self.running = False
+        self.lock = threading.Lock()
+        self.frame = None
+        self.thread = None
+
+    def start(self):
+        self.cap = cv2.VideoCapture(self.device_index, cv2.CAP_DSHOW)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(self.device_index)
+        if not self.cap.isOpened():
+            return False
+
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+
+        self.running = True
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+        return True
+
+    def _worker(self):
+        while self.running:
+            if self.cap is None:
+                break
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                with self.lock:
+                    self.frame = frame
+            else:
+                time.sleep(0.01)
+
+    def read(self):
+        with self.lock:
+            if self.frame is not None:
+                return True, self.frame.copy()
+            return False, None
+
+    def stop(self):
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=0.3)
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
 
 
 class Particle:
@@ -159,7 +298,7 @@ class Particle:
     def update(self):
         self.x += self.vx
         self.y += self.vy
-        self.vy += 0.08  # Gravity dampener
+        self.vy += 0.08
         self.alpha -= self.fade_rate
 
     @property
@@ -180,13 +319,13 @@ class FotoKitaBlurApp:
         self.base_dir = Path(__file__).resolve().parent
         self.audio = AudioController(self.base_dir)
 
-        # Vision Models
+        # Vision Models (CPU accelerated with downscaled inference)
         self.mp_hands = mp.solutions.hands
         self.hands_detector = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=2,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_detection_confidence=0.45,
+            min_tracking_confidence=0.45
         )
 
         self.mp_face = mp.solutions.face_detection
@@ -195,10 +334,15 @@ class FotoKitaBlurApp:
             model_selection=0
         )
 
-        # Camera & Processing State
-        self.cap = None
+        # Threaded Camera & Processing State
+        self.camera_reader = None
         self.is_camera_running = False
-        self.camera_thread = None
+        self.face_stride = 0
+
+        # Canvas Viewport tracking (prevents zoom feedback loop)
+        self.canvas_w = 854
+        self.canvas_h = 480
+        self.tk_img = None
 
         # Gesture & Temporal Filters
         self.peace_hold_frames = 0
@@ -243,6 +387,9 @@ class FotoKitaBlurApp:
 
         self._build_ui()
 
+        # Audio Loop Monitor (polls every 80ms on Tkinter thread)
+        self._schedule_audio_check()
+
         # Window Close Protocol
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -270,6 +417,10 @@ class FotoKitaBlurApp:
                     self.cat_frames.append(f)
             except Exception as e:
                 print("Failed loading cat gif:", e)
+
+    def _schedule_audio_check(self):
+        self.audio.check_loops()
+        self.root.after(80, self._schedule_audio_check)
 
     def _build_ui(self):
         # 1. Top Header
@@ -301,12 +452,16 @@ class FotoKitaBlurApp:
         content_frame = tk.Frame(self.root, bg="#050507", padx=16, pady=12)
         content_frame.pack(fill="both", expand=True)
 
-        # Video Canvas Frame
+        # Video Canvas Frame (Using fixed-layout tk.Canvas to eliminate geometric zoom feedback)
         video_wrapper = tk.Frame(content_frame, bg="#000000", bd=1, relief="solid")
         video_wrapper.pack(fill="both", expand=True)
 
-        self.canvas = tk.Label(video_wrapper, bg="#000000")
+        self.canvas = tk.Canvas(video_wrapper, bg="#000000", highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
+
+        # Initial placeholder text
+        self.root.after(100, self._draw_placeholder)
 
         # 3. Action Buttons Row
         action_bar = tk.Frame(content_frame, bg="#050507", pady=10)
@@ -403,6 +558,23 @@ class FotoKitaBlurApp:
             lbl_val.pack(side="left")
             self.diag_badges[finger] = lbl_val
 
+    def _on_canvas_resize(self, event):
+        if event.width > 50 and event.height > 50:
+            self.canvas_w = event.width
+            self.canvas_h = event.height
+            if not self.is_camera_running:
+                self._draw_placeholder()
+
+    def _draw_placeholder(self):
+        self.canvas.delete("all")
+        cw = getattr(self, "canvas_w", 854)
+        ch = getattr(self, "canvas_h", 480)
+        self.canvas.create_text(
+            cw // 2, ch // 2,
+            text="Kamera Nonaktif\nKlik 'Nyalakan Kamera' untuk memulai",
+            fill="#5f5f6e", font=("Segoe UI", 12, "bold"), justify="center"
+        )
+
     def _on_crown_toggle(self):
         if self.var_crown.get():
             self.var_cheeky.set(False)
@@ -418,13 +590,11 @@ class FotoKitaBlurApp:
             self.start_camera()
 
     def start_camera(self):
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
+        self.camera_reader = CameraReader(0, 1280, 720)
+        if not self.camera_reader.start():
             messagebox.showerror("Error Kamera", "Tidak dapat membuka kamera web index 0.")
+            self.camera_reader = None
             return
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
         self.is_camera_running = True
         self.btn_camera.config(text="Matikan Kamera", bg="#f43f5e", fg="#ffffff")
@@ -438,20 +608,18 @@ class FotoKitaBlurApp:
 
     def stop_camera(self):
         self.is_camera_running = False
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        if self.camera_reader:
+            self.camera_reader.stop()
+            self.camera_reader = None
 
         self.audio.stop_kicau()
         self.scubacat_hold_frames = 0
         self.peace_hold_frames = 0
         self.particles.clear()
+        self.waving_energy = 0.0
 
-        # Reset Canvas
-        blank = np.zeros((480, 854, 3), dtype=np.uint8)
-        img = ImageTk.PhotoImage(image=Image.fromarray(blank))
-        self.canvas.configure(image=img)
-        self.canvas.image = img
+        # Clear Canvas and show placeholder
+        self._draw_placeholder()
 
         self.btn_camera.config(text="Nyalakan Kamera", bg="#ffffff", fg="#050507")
         self.lbl_status.config(text="Kamera Nonaktif", fg="#eab308")
@@ -506,20 +674,20 @@ class FotoKitaBlurApp:
         ).pack(pady=12)
 
     def _process_frame(self):
-        if not self.is_camera_running or self.cap is None:
+        if not self.is_camera_running or self.camera_reader is None:
             return
 
-        success, frame = self.cap.read()
-        if not success:
-            self.root.after(15, self._process_frame)
+        # Non-blocking threaded read
+        success, frame = self.camera_reader.read()
+        if not success or frame is None:
+            self.root.after(10, self._process_frame)
             return
 
         # Flip frame horizontally for natural mirror look
         frame = cv2.flip(frame, 1)
-        h, w, _ = frame.shape
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        orig_h, orig_w, _ = frame.shape
 
-        # Update FPS
+        # Update FPS metrics
         self.frame_counter += 1
         now = time.perf_counter()
         if now - self.last_fps_time >= 1.0:
@@ -527,37 +695,55 @@ class FotoKitaBlurApp:
             self.frame_counter = 0
             self.last_fps_time = now
 
-        # Run MediaPipe Hands & Face Detection
-        hands_result = self.hands_detector.process(rgb)
-        face_result = self.face_detector.process(rgb)
+        # Canvas target dimensions without geometry feedback
+        target_w = max(320, getattr(self, "canvas_w", 854))
+        target_h = max(240, getattr(self, "canvas_h", 480))
 
-        # 1. Track Face with Smoothing (EMA)
-        raw_faces = []
-        if face_result.detections:
-            for det in face_result.detections:
-                box = det.location_data.relative_bounding_box
-                raw_faces.append((
-                    box.xmin + box.width / 2.0,
-                    box.ymin + box.height / 2.0,
-                    box.width,
-                    box.height
-                ))
+        scale = min(target_w / orig_w, target_h / orig_h)
+        nw = max(1, int(orig_w * scale))
+        nh = max(1, int(orig_h * scale))
 
-        if raw_faces:
-            rf = raw_faces[0]
-            if self.tracked_face is None:
-                self.tracked_face = list(rf)
+        # 1. Fast Downsampled Frame for MediaPipe Inference (640x360)
+        infer_frame = cv2.resize(frame, (640, 360), interpolation=cv2.INTER_LINEAR)
+        infer_rgb = cv2.cvtColor(infer_frame, cv2.COLOR_BGR2RGB)
+
+        hands_result = self.hands_detector.process(infer_rgb)
+
+        # Stride Face Detection (every 3rd frame for high FPS)
+        self.face_stride = (self.face_stride + 1) % 3
+        if self.face_stride == 0 or self.tracked_face is None:
+            face_result = self.face_detector.process(infer_rgb)
+            raw_faces = []
+            if face_result.detections:
+                for det in face_result.detections:
+                    box = det.location_data.relative_bounding_box
+                    raw_faces.append((
+                        box.xmin + box.width / 2.0,
+                        box.ymin + box.height / 2.0,
+                        box.width,
+                        box.height
+                    ))
+            if raw_faces:
+                rf = raw_faces[0]
+                if self.tracked_face is None:
+                    self.tracked_face = list(rf)
+                else:
+                    alpha = 0.35
+                    self.tracked_face[0] += (rf[0] - self.tracked_face[0]) * alpha
+                    self.tracked_face[1] += (rf[1] - self.tracked_face[1]) * alpha
+                    self.tracked_face[2] += (rf[2] - self.tracked_face[2]) * alpha
+                    self.tracked_face[3] += (rf[3] - self.tracked_face[3]) * alpha
+                self.face_missed_frames = 0
             else:
-                alpha = 0.35
-                self.tracked_face[0] += (rf[0] - self.tracked_face[0]) * alpha
-                self.tracked_face[1] += (rf[1] - self.tracked_face[1]) * alpha
-                self.tracked_face[2] += (rf[2] - self.tracked_face[2]) * alpha
-                self.tracked_face[3] += (rf[3] - self.tracked_face[3]) * alpha
+                self.face_missed_frames += 1
+                if self.face_missed_frames > 8:
+                    self.tracked_face = None
+        elif self.tracked_face is not None:
             self.face_missed_frames = 0
-        else:
-            self.face_missed_frames += 1
-            if self.face_missed_frames > 6:
-                self.tracked_face = None
+
+        # Resize video directly to target display dimensions using fast OpenCV SIMD
+        display_frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        w, h = nw, nh
 
         # 2. Gesture Evaluation
         peace_detected = False
@@ -630,7 +816,6 @@ class FotoKitaBlurApp:
                 # 1. Identify which hand is near the face (nose/mouth area)
                 for i, hand in enumerate(hands_landmarks):
                     hl = hand.landmark
-                    # Check key hand landmarks: wrist(0), palm(9), index tip(8), thumb tip(4)
                     d0 = math.hypot(hl[0].x - fcx, hl[0].y - fcy)
                     d9 = math.hypot(hl[9].x - fcx, hl[9].y - fcy)
                     d8 = math.hypot(hl[8].x - fcx, hl[8].y - fcy)
@@ -646,7 +831,6 @@ class FotoKitaBlurApp:
                     nose_wrist = hands_landmarks[nose_hand_idx].landmark[0]
                     wave_wrist = wave_hand[0]
 
-                    # Separation checks: waving hand is away from face and away from nose hand
                     dist_wave_face = math.hypot(wave_wrist.x - fcx, wave_wrist.y - fcy)
                     dist_between_hands = math.hypot(wave_wrist.x - nose_wrist.x, wave_wrist.y - nose_wrist.y)
 
@@ -674,7 +858,7 @@ class FotoKitaBlurApp:
                                 elif d == self.wave_stroke_dir:
                                     self.wave_stroke_dist += abs(primary_delta)
                                 else:
-                                    # Direction reversed!
+                                    # Direction reversed! Check travel distance
                                     min_stroke = min(fw * 0.15, 0.028)
                                     if self.wave_stroke_dist >= min_stroke:
                                         self.waving_energy = min(100.0, self.waving_energy + 24.0)
@@ -713,7 +897,7 @@ class FotoKitaBlurApp:
             ksize = int(self.var_blur.get())
             if ksize % 2 == 0:
                 ksize += 1
-            frame = cv2.GaussianBlur(frame, (ksize, ksize), 0)
+            display_frame = cv2.GaussianBlur(display_frame, (ksize, ksize), 0)
 
         # 4. Draw Hand Skeleton (if enabled)
         if self.var_skeleton.get() and hands_landmarks:
@@ -728,12 +912,13 @@ class FotoKitaBlurApp:
             for hand in hands_landmarks:
                 pts = [(int(pt.x * w), int(pt.y * h)) for pt in hand.landmark]
                 for p1, p2 in connections:
-                    cv2.line(frame, pts[p1], pts[p2], (246, 130, 59), 3, cv2.LINE_AA)
+                    cv2.line(display_frame, pts[p1], pts[p2], (246, 130, 59), 3, cv2.LINE_AA)
                 for pt in pts:
-                    cv2.circle(frame, pt, 4, (255, 255, 255), -1, cv2.LINE_AA)
+                    cv2.circle(display_frame, pt, 4, (255, 255, 255), -1, cv2.LINE_AA)
 
-        # Convert OpenCV BGR to PIL Image for Emoji & Overlay Rendering
-        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        # Convert OpenCV BGR to PIL Image directly at display resolution
+        display_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(display_rgb)
         draw = ImageDraw.Draw(pil_img)
 
         # 5. Spawn and Render Particles
@@ -746,7 +931,6 @@ class FotoKitaBlurApp:
         for sx, sy in cheeky_spawns:
             self.particles.append(Particle(sx, sy, ['🖕', '😜', '🤪', '😝', '👅']))
 
-        # Update particles
         self.particles = [p for p in self.particles if p.is_alive]
         for p in self.particles:
             p.update()
@@ -769,7 +953,6 @@ class FotoKitaBlurApp:
             center_x = fcx * w
             center_y = (fcy - fh * 0.72) * h
 
-            # Depth perspective sorting
             halo_items = []
             for i in range(6):
                 ang = self.crown_angle + (i * 2.0 * math.pi / 6.0)
@@ -779,11 +962,10 @@ class FotoKitaBlurApp:
                 hy = center_y + sin_a * ry
                 halo_items.append((sin_a, hx, hy, emojis[i % len(emojis)]))
 
-            halo_items.sort(key=lambda t: t[0])  # Back items first
+            halo_items.sort(key=lambda t: t[0])
             for _, hx, hy, em in halo_items:
                 draw.text((int(hx - 18), int(hy - 18)), em, font=self.emoji_font, embedded_color=True)
 
-            # Ambient particles only when actively triggered
             if random.random() < 0.25:
                 self.particles.append(Particle(random.uniform(0, w), random.uniform(0, h * 0.7), emojis))
         else:
@@ -804,7 +986,6 @@ class FotoKitaBlurApp:
                 cw, ch = cat_img.size
                 paste_x = w - cw - 24
                 paste_y = h - ch - 24
-                # Draw sleek badge background behind cat
                 draw.rounded_rectangle(
                     [paste_x - 6, paste_y - 6, paste_x + cw + 6, paste_y + ch + 6],
                     radius=16, fill=(14, 14, 18, 200), outline=(255, 255, 255, 120), width=2
@@ -833,30 +1014,19 @@ class FotoKitaBlurApp:
             active_gesture_text = "🖕 JARI TENGAH"
             badge_color = (250, 204, 21)
 
-        # Draw HUD pill
         draw.rounded_rectangle([16, 16, 260, 48], radius=8, fill=(14, 14, 18), outline=(255, 255, 255), width=1)
         draw.text((28, 24), active_gesture_text, fill=badge_color, font=self.text_font)
 
-        # Draw FPS pill
         draw.rounded_rectangle([w - 110, 16, w - 16, 48], radius=8, fill=(14, 14, 18), outline=(255, 255, 255), width=1)
         draw.text((w - 96, 24), f"FPS: {int(self.fps)}", fill=(144, 144, 156), font=self.text_font)
 
-        # Resize PIL image dynamically to fit Tkinter label
-        cw = max(640, self.canvas.winfo_width())
-        ch = max(360, self.canvas.winfo_height())
-        if cw > 10 and ch > 10:
-            scale = min(cw / w, ch / h)
-            nw = int(w * scale)
-            nh = int(h * scale)
-            pil_img = pil_img.resize((nw, nh), Image.Resampling.BILINEAR)
+        # Draw centered on Canvas without changing widget geometry
+        self.tk_img = ImageTk.PhotoImage(image=pil_img)
+        self.canvas.delete("all")
+        self.canvas.create_image(target_w // 2, target_h // 2, image=self.tk_img, anchor="center")
 
-        # Display on Canvas
-        tk_img = ImageTk.PhotoImage(image=pil_img)
-        self.canvas.configure(image=tk_img)
-        self.canvas.image = tk_img
-
-        # Loop at target 30-60 FPS
-        self.root.after(10, self._process_frame)
+        # Schedule next frame at target 60 FPS (~16ms)
+        self.root.after(16, self._process_frame)
 
     def on_close(self):
         self.stop_camera()

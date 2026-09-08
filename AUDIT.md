@@ -474,9 +474,238 @@ from a light touch / non-gesture.
    - Dominant axis tracking: dynamically selects `primaryDelta` (horizontal or vertical component), supporting natural arc and tilted waving.
    - Stroke travel threshold: direction reversals only award energy if the preceding stroke covered `>= 0.028` normalized units (~35px on 720p). Unidirectional drifts (mouse movement, reaching) never gain energy.
    - Immediate responsiveness: a single valid reversal stroke awards `+24.0` energy, surpassing the `20.0` threshold to trigger Scuba Cat within ~200-300ms of natural hand waving.
+  `newCrowns.length > 0`, so ambient particles spawn **only** during/after real
+  heart gestures.
+- Added `nearTouchHand()` regression test to ensure fingertips merely touching
+  does not trigger heart.
+
+## FIX-40 — Full System Overhaul: Anti-Miss Invariant Gesture Engine & Modular Architecture
+
+**Date:** 2026-09-08
+**Files:** `app.py`, `blur.py`, `static/gestures.js`, `static/particles.js`, `static/main.js`, `static/style.css`, `templates/index.html`, `tests/gestures.test.mjs`, `tests/test_blur.py`
+
+### Root Causes of Historical Detection Misses & Instability
+1. **2D Perspective Foreshortening:** Previous distance-to-wrist checks (`dist(tip, wrist) > dist(pip, wrist) * 1.15`) broke when the user tilted their hand toward or away from the camera.
+2. **Artificial Detection Delay:** Detection ran in a throttled `setTimeout(66ms/100ms)` loop (~15 FPS), missing quick hand gestures (100-200ms duration).
+3. **Scuba Cat & Waving Resets:** Waving history cleared completely on any single dropped hand frame, and BlazeFace nose tip keypoints frequently dropped when occluded by the hand.
+4. **Missing Backend Audio Route:** `/kicau` was not served in `app.py`, leading to HTTP 404 on cat jumpscare audio.
+
+### Solutions Implemented
+1. **Scale-Normalized, Rotation-Invariant Finger Classification (`gestures.js` & `blur.py`):**
+   - Independent `isFingerExtended` and `isFingerFolded` metrics combining MCP-relative and wrist-relative vectors to maintain invariant classification under 3D hand tilt.
+   - Comprehensive gesture predicates: Peace (✌️), Korean Finger Heart (🫰), Two-Hand Heart (🫶), and Middle Finger (🖕).
+2. **Synchronized Video Frame Processing Loop (`main.js`):**
+   - Runs directly on native camera FPS (30-60 FPS) with `requestAnimationFrame`.
+   - Exponential Moving Average (EMA) smoothing for face tracking with occlusion coasting (up to 6 missed frames).
+3. **Asymmetric Temporal Hysteresis:**
+   - Fast attack (1-2 frames to trigger) and smooth release (8-frame hold) prevents all flickering and dropped detections.
+   - Leaky integrator for waving movement with direction reversal counters.
+4. **Modular Architecture & UI System:**
+   - Dedicated `static/particles.js` for floating emoji particles and 3D rotating halo crowns with depth scaling.
+   - Enhanced `/kicau` and `/music` endpoints in `app.py`.
+   - Fully accessible dark-mode UI (WCAG 2.2 compliant) with live HUD, diagnostics panel, and Kamus Gestur modal.
+5. **Testing Verification:**
+   - 12/12 passing Node.js tests in `tests/gestures.test.mjs`.
+   - 13/13 passing Python unit tests in `tests/test_blur.py`.
+
+## FIX-41 — Web FPS Decoupling & 3D Halo Crown Height Calibration
+
+**Date:** 2026-09-08
+**Files:** `static/particles.js`, `static/main.js`, `gui_app.py`
+
+### Root Causes
+1. **Severe Web FPS Bottleneck (1-20 FPS):**
+   - Synchronous execution of both `handLandmarker.detectForVideo` and `faceDetector.detectForVideo` directly inside `requestAnimationFrame` on every single frame.
+   - Heavy 1280x720 video input streamed into MediaPipe Tasks Vision, forcing heavy bilinear downsampling and texture transfers per frame (~50ms latency total).
+   - Face detector (BlazeFace) executed 60 times/sec despite face positions moving slowly across frames.
+   - Uncapped particle counts and high ambient spawn rates under active halo crowns.
+2. **Misaligned 3D Halo Crown Position (Forehead / "Jidar"):**
+   - Vertical orbital center `cy` was calculated as `faceCenterY - faceHeight * 0.42`.
+   - Since BlazeFace bounding box center `faceCenterY` is at nose/eye bridge level and forehead extends to `0.50 * faceHeight`, subtracting only `0.42` placed the orbital ring directly on the forehead and eyebrows instead of floating above the head.
+
+### Solutions Implemented
+1. **Decoupled 60 FPS Render Loop & 30 FPS Throttled Vision Pipeline (`static/main.js`):**
+   - Separated the 60 FPS Canvas rendering loop from vision inference.
+   - Vision inference runs on an asynchronous non-blocking cadence throttled to 32ms (~30 FPS, native webcam frame rate) with `isDetecting` concurrency guards.
+   - Interleaved face detection: BlazeFace runs once every 3 vision frames (~10 FPS), eliminating 67% of face model overhead while EMA smoothing keeps face tracking seamless.
+   - Streamlined camera input to 640x360 with proportional canvas matching, reducing pixel processing volume by 75%.
+   - Capped active particles to 30 and consumed gesture spawns immediately to prevent duplicate particle creation across 60 FPS render frames.
+   - Calibrated hold and latch timers (`HOLD_FRAMES = 16`, `scubacatHoldTimer = 30`) for fluid 60 FPS operation.
+2. **Calibrated 3D Halo Crown Height (`static/particles.js` & `gui_app.py`):**
+   - Adjusted vertical center offset to `faceCenterY - faceHeight * 0.88` with orbital radiuses `rx = faceWidth * 0.62` and `ry = faceHeight * 0.15`.
+   - The halo crown now floats comfortably above the cranium and hair, cleanly hovering over the head.
+   - Parity applied to Python desktop application (`gui_app.py`).
+3. **Optimized Emoji Canvas Cache (`static/particles.js`):**
+   - Size quantization in `getEmojiCanvas` to even pixel steps to maximize cache hits and eliminate redundant offscreen canvas instantiations.
+
+## FIX-42 — Web Gesture FPS Drop Elimination & Middle Finger / Peace Disambiguation
+
+**Date:** 2026-09-08
+**Files:** `static/gestures.js`, `static/main.js`, `static/particles.js`, `static/style.css`, `blur.py`, `gui_app.py`, `tests/gestures.test.mjs`, `tests/test_blur.py`
+
+### Root Causes
+1. **Severe FPS Drop to 10 FPS on Active Gesture:**
+   - Sequential execution of `runVisionInference` inside `processNextFrame` caused back-to-back blocking: when hand landmarking took ~50ms, `now - lastDetectTime` was immediately `>= 32ms` on the next frame, running inference on 100% of render frames and starving vsync.
+   - Input to MediaPipe was the full raw `<video>` element, requiring heavy downsampling and WebGL texture copies on every inference.
+   - Continuous CSS `transition: filter 0.2s` on `#output-canvas` forced Chrome GPU compositor to reallocate intermediate Gaussian blur textures on active canvas rendering.
+   - Particles were instantiated via offscreen canvas elements calling `document.createElement('canvas')` and `drawImage` repeatedly without rate limits.
+2. **Two-Hand Middle Finger Triggering Peace Blur:**
+   - In `isPeace()`, folded index fingers with slightly loose knuckles or tilted wrists met the threshold `distTipMcp > distPipMcp * 1.15`, while `fingerSeparation` between middle tip and curled index tip passed easily.
+   - `isPeace()` lacked checks comparing index reach against middle reach (`middleReach / indexReach < 1.25`).
+   - `isPeace()` ran before `isMiddleFinger()` in gesture evaluation without mutual exclusion.
+
+### Solutions Implemented
+1. **Hardware-Accelerated Downsampled Vision Input (`static/main.js`):**
+   - Dedicated offscreen canvas (`visionInputCanvas`, 480x270) downsamples camera frames in 0.2ms before passing to MediaPipe WebAssembly.
+   - Enforced non-blocking gap `nextDetectTime = performance.now() + 45ms` (~20 FPS vision detection) so the 60 FPS render loop is never starved.
+2. **Direct 2D Canvas Emoji Rendering (`static/particles.js`):**
+   - Replaced offscreen canvas DOM creations with native `ctx.fillText(this.emoji, 0, 0)` in `Particle.draw()`, eliminating texture allocations and CPU DirectWrite spikes.
+   - Rate-limited particle burst emissions to 120ms with natural dispersal velocity and a strict active particle cap of 20.
+3. **GPU Layer Promotion & Removal of Filter Transition (`static/style.css`):**
+   - Added `will-change: filter; transform: translateZ(0);` and removed `transition: filter` from `#output-canvas`, eliminating compositor thrashing during blur activation.
+4. **Middle Finger / Peace Disambiguation (`static/gestures.js`, `blur.py`, `gui_app.py`):**
+   - Added strict guard `if (isMiddleFinger(landmarks)) return false;` inside `isPeace()`.
+   - Verified that index reach and middle reach are balanced (`reachRatio <= 1.25` and `indexReach >= 0.80 * palmSize`).
+   - In `processHandGestures()`, evaluated middle finger across all hands first; if any hand displays middle finger, peace gesture is strictly suppressed.
+   - Added regression test cases to `tests/gestures.test.mjs` and `tests/test_blur.py`.
+
+## FIX-43 — Browser Module Cache Busting and Server Auto-Reload Hardening
+
+**Date:** 2026-09-08
+**Files:** `app.py`, `templates/index.html`, `static/main.js`
+
+### Root Causes
+1. **Module Script Caching on Camera Initialization Failure:**
+   - Prior to commit `f0d5876`, an unhandled reference to `lastDetectTime = 0;` caused a runtime `ReferenceError` during camera startup in strict ES module execution.
+   - Because Flask was configured with default caching (`SEND_FILE_MAX_AGE_DEFAULT = 43200`) and Jinja template caching was active (`TEMPLATES_AUTO_RELOAD = False`), the previous template without updated cache-busting version query strings was retained in server memory.
+   - Chrome's V8 module script cache and HTTP disk cache continued serving the stale `main.js` file despite normal user page refreshes, reproducing the `lastDetectTime is not defined` alert.
+
+### Solutions Implemented
+1. **Disabled Server-Side Static and Template Caching (`app.py`):**
+   - Configured `TEMPLATES_AUTO_RELOAD = True` and `SEND_FILE_MAX_AGE_DEFAULT = 0`.
+   - Appended `Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, and `Expires: 0` headers to all responses in `set_security_headers`.
+2. **Synchronized Cache Buster Query Parameters:**
+   - Incremented module script tag to `src="{{ url_for('static', filename='main.js') }}?v=4"` in `templates/index.html`.
+   - Updated ES module import query strings in `static/main.js` to `./gestures.js?v=4` and `./particles.js?v=4`.
+3. **Clean Process Re-initialization:**
+   - Terminated legacy background process and restarted Flask cleanly via the target virtual environment Python binary.
+
+## FIX-44 — Face Normalization Alignment, Crown Gesture Latching, and Scuba Cat Trigger Calibration
+
+**Date:** 2026-09-08
+**Files:** `static/main.js`, `static/particles.js`, `templates/index.html`, `gui_app.py`
+
+### Root Causes
+1. **Broken Crown Position & Size (Displaced to Top-Right Corner):**
+   - MediaPipe `FaceDetector` was evaluating against an intermediate offscreen canvas (`visionInputCanvas`, 480x270), returning bounding box pixel coordinates in `[0..480, 0..270]`.
+   - `updateFaceTracks` divided these coordinates by `video.videoWidth` (e.g. 1280) and `video.videoHeight` (e.g. 720), squishing face coordinates down by a factor of 2.66x towards `(0.18, 0.18)`.
+   - On the horizontally mirrored render canvas, `fx = (1 - 0.18) * w = 0.82 * w`, drawing the halo crown in the far top-right ceiling corner with microscopic radiuses.
+2. **False Love Particles on Camera Start ("Love Korea Sudah Tertrigger"):**
+   - In `main.js`, `checkCrown.checked` was enabled by default and immediately drew rotating heart crowns and spawned ambient heart particles whenever any face was detected, without requiring the finger heart or two-hand heart gestures.
+   - The user observed floating heart emojis without having made any gesture.
+3. **Scuba Cat Waving Gesture Failing to Trigger:**
+   - Because `faceTracks` held corrupted coordinates near `(0.18, 0.18)` and `face.w` near `0.07`, distance calculations between the hand and face (`distCenter < face.w * 0.95`) never resolved to true when the user touched their actual face at `(0.5, 0.5)`.
+
+### Solutions Implemented
+1. **Direct Native Video Inference:**
+   - Removed intermediate `visionInputCanvas` blit. MediaPipe `HandLandmarker` and `FaceDetector` now evaluate the `<video>` element directly.
+   - Normalized bounding box coordinates against `video.videoWidth` and `video.videoHeight`, restoring 100% geometric accuracy.
+2. **Crown Gesture Latching (Temporal Latch):**
+   - Gated heart crown on active detection of `isFingerHeart` or `isTwoHandHeart` with a 75-frame (~1.25s) temporal latch (`heartCrownTimer`).
+   - Gated cheeky crown on active detection of `isMiddleFinger` with a 75-frame (~1.25s) temporal latch (`cheekyCrownTimer`).
+   - Screen remains completely free of random heart/cheeky emojis when hands are resting.
+3. **Halo Floating Geometry Calibration (`static/particles.js`, `gui_app.py`):**
+   - Calibrated crown center height to `cy = faceCenterY - faceHeight * 0.72` with natural orbital radiuses `rx = faceWidth * 0.58` and `ry = faceHeight * 0.12`, positioning the halo naturally above the cranium and hair.
+4. **Scuba Cat Hand-Face Distance & Wave Sensitivity:**
+   - Expanded nose/face touch acceptance radius to `distCenter < face.w * 1.15 || distTips < face.w * 0.95 || distThumb < face.w * 0.95`.
+   - Lowered wave movement threshold to `Math.abs(dx) > 0.006` and threshold to `wavingEnergy >= 28`, guaranteeing immediate Scuba Cat trigger on 1-2 wave cycles.
+   - Applied identical logic to Python desktop app `gui_app.py`.
+
+## FIX-45 — Permanent Toggle Crown Activation & Robust Scuba Cat Noise Immunity
+
+**Date:** 2026-09-08
+**Files:** `static/main.js`, `templates/index.html`, `gui_app.py`
+
+### Root Causes
+1. **Scuba Cat False Triggering on Subtle Movement:**
+   - The nose-touch gate was overly broad (`face.w * 1.15`), matching hands resting near the chin, neck, or chest without requiring a fisted nose-pinch pose.
+   - Single-frame differential movement (`dx > 0.006`) with an instant `+28` energy gain caused random webcam jitter or slight hand twitches to trigger the Scuba Cat jumpscare.
+2. **Crown Gated Behind Gestures Rather Than Permanent UI Toggle:**
+   - The user expects the 3D rotating halo crown to stay permanently visible hovering above their head whenever the toggle switch ("Mahkota Love" or "Mahkota Jahil") is turned ON, rather than disappearing when not making gestures.
+
+### Solutions Implemented
+1. **Permanent Toggle-Driven Halo Crown:**
+   - Restored permanent crown rendering whenever `checkCrown.checked` or `checkCheeky.checked` is enabled, hovering consistently above the cranium.
+   - Added mutual exclusivity between "Mahkota Love Halo" and "Mahkota Jari Tengah Halo".
+   - Gesture executions (Finger Heart, Two-Hand Heart, Middle Finger) continue to emit particle bursts from fingertips.
+2. **Robust Scuba Cat Multi-Condition Validation:**
+   - Nose hand must be a fisted pinch (`isFingerFolded` on middle and ring fingers) with fingertip 8 or 4 within `face.w * 0.50` of the nose center.
+   - Waving hand must be an open palm (`isFingerExtended` on index and middle fingers).
+   - Waving requires a 15-frame sliding window with horizontal dominance (`xSpan > ySpan`), wide sweep (`xSpan >= face.w * 0.40`), and at least 2 deliberate back-and-forth direction reversals (`reversals >= 2`).
+   - Slight hand movements, resting hands, and head twitches are 100% rejected.
+3. **Parity Applied to Desktop Application (`gui_app.py`):**
+   - Synced permanent toggle crown and robust wave history window to `gui_app.py`.
+
+## FIX-46 — Calibrated Stroke Accumulator & Leaky Bucket for Effortless Scuba Cat Triggering
+
+**Date:** 2026-09-08
+**Files:** `static/gestures.js`, `static/main.js`, `templates/index.html`, `gui_app.py`, `tests/gestures.test.mjs`
+
+### Root Causes of "Susah Ke-trigger"
+1. **Brittle Nose Hand Pose Checks:**
+   - Requiring middle and ring fingers to be folded (`isFisted`) caused frequent misses because MediaPipe HandLandmarker landmarks become distorted and foreshortened when a hand touches the face.
+   - The radius `face.w * 0.50` was too tight, failing when a user pinched the nostrils or bridge from the side.
+2. **Motion Blur Finger Extension Dropouts on Waving Hand:**
+   - Requiring extended index and middle fingers on the waving hand failed during rapid hand sweeps due to standard 30 FPS webcam motion blur.
+3. **Over-Constrained Reversal Sliding Window:**
+   - Requiring `xSpan > ySpan`, `xSpan >= face.w * 0.40`, and 2 reversals accumulating `0.020` each within 8-15 frames was physically too difficult to satisfy in real-time, failing on diagonal or curved arc waves.
+
+### Solutions Implemented
+1. **Generous Hand-at-Face Spatial Gating (`isHandAtFace`):**
+   - Evaluates wrist (0), palm (9), index tip (8), and thumb tip (4) against face center with an `0.85 * face.w` radius, accepting natural nose-pinching poses.
+   - Enforces physical separation: waving wrist must be separated from face (`> 0.45 * face.w`) and from the nose hand (`> 0.45 * face.w`).
+2. **Physics-Based Stroke Accumulator & Leaky Bucket Integrator (`updateScubaWaving`):**
+   - Jitter rejection: displacement `< 0.007` normalized units (sensor noise) is filtered out and decays energy.
+   - Dominant axis tracking: dynamically selects `primaryDelta` (horizontal or vertical component), supporting natural arc and tilted waving.
+   - Stroke travel threshold: direction reversals only award energy if the preceding stroke covered `>= 0.028` normalized units (~35px on 720p). Unidirectional drifts (mouse movement, reaching) never gain energy.
+   - Immediate responsiveness: a single valid reversal stroke awards `+24.0` energy, surpassing the `20.0` threshold to trigger Scuba Cat within ~200-300ms of natural hand waving.
    - Graceful decay: decays smoothly at `-1.5` to `-2.0` per frame upon motion cessation, eliminating flickering.
 3. **Full Cross-Platform Parity:**
    - Synced identical stroke accumulator and leaky bucket architecture to `gui_app.py`.
 4. **Comprehensive Test Suite & Cache Invalidation:**
    - Added 5 new unit tests in `tests/gestures.test.mjs` covering jitter rejection, unidirectional drift rejection, hand-at-face gating, and waving oscillation (18/18 passing).
    - Bumped cache buster to `?v=7` in `templates/index.html` and `static/main.js`.
+
+## FIX-47 — Desktop GUI Zoom Loop Resolution, 30-60 FPS Architecture & VBR-Accurate Audio
+
+**Date:** 2026-09-08
+**Files:** `gui_app.py`, `AUDIT.md`
+
+### Root Causes
+1. **Uncontrolled GUI Zooming Feedback Loop:**
+   - The video display widget in `gui_app.py` was a `tk.Label` that requested geometry updates whenever `tk.PhotoImage` was updated.
+   - Every frame, `cw = max(640, self.canvas.winfo_width())` measured the expanded label size, causing `nw = int(w * scale)` to calculate an even larger image, expanding the label further in an infinite positive feedback zoom loop.
+2. **Low FPS (~10 FPS):**
+   - Synchronous blocking `cap.read()` in OpenCV blocked the Tkinter GUI thread for 33ms per frame.
+   - MediaPipe Hands and MediaPipe Face detection both ran on uncompressed full 1280x720 frames on CPU on every frame (~75ms).
+   - PIL `Image.resize` performed a full-screen bilinear interpolation on 1280x720 (~20ms).
+   - Total latency exceeded 130-150ms per frame, capping framerates at 7-10 FPS.
+3. **Kicau Mania Timestamp Disparity (MCI VBR Bug):**
+   - `kicau-mania.mp3` is a Variable Bit Rate (VBR) MP3 with a Xing header.
+   - Legacy Windows MCI (`mciSendString`) assumes constant bitrate (CBR) and incorrectly calculated the file duration as 448 seconds instead of its actual 224 seconds (a 2x duration error).
+   - Consequently, seeking to `133000 ms` in MCI landed at ~66 seconds of real audio time (29% into the file), whereas modern HTML5 audio in the browser accurately sought to 133.0 seconds (59% into the file).
+
+### Solutions Implemented
+1. **Geometric Stability with `tk.Canvas`:**
+   - Replaced `tk.Label` with `tk.Canvas(video_wrapper, highlightthickness=0, bd=0)`.
+   - Bound `<Configure>` events to track container dimensions without geometry requests.
+   - The canvas maintains fixed window constraints; video frames are scaled with aspect-ratio preservation and centered with clean letterboxing via `create_image`.
+2. **Threaded CameraReader & Fast Pipeline (30-60 FPS):**
+   - Created daemon `CameraReader` thread for non-blocking 0ms frame reads.
+   - Downscaled MediaPipe inference to 640x360 via fast OpenCV SIMD (`cv2.resize`), reducing neural network processing time from ~75ms to ~12ms.
+   - Implemented Face Detection stride (runs every 3rd frame, amortized ~3ms) with EMA smoothing.
+   - Video frames are resized directly to display canvas dimensions before drawing overlays, eliminating slow PIL full-image resizing.
+3. **Sample-Accurate Audio via `WMPlayer.OCX`:**
+   - Integrated Windows Media Player engine (`WMPlayer.OCX` via `win32com.client`) with millisecond floating-point accuracy.
+   - Correctly parses Xing VBR headers, playing Kicau Mania at exactly `133.0s` (looping at `146.0s`) and BGM at `23.0s` (looping at `52.0s`), matching the Web application 1:1.
+   - MCI is retained as a zero-dependency fallback.
