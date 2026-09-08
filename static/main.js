@@ -1,7 +1,7 @@
 // Foto Kita Blur - Real-time AI Vision & Gesture Processing Engine
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended } from "./gestures.js?v=5";
-import { Particle, draw3DCrown } from "./particles.js?v=5";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended, isFingerFolded } from "./gestures.js?v=6";
+import { Particle, draw3DCrown } from "./particles.js?v=6";
 
 // Global Vision Models & State
 let handLandmarker = null;
@@ -80,9 +80,10 @@ let peaceHoldTimer = 0;
 let scubacatHoldTimer = 0;
 let lastAppliedBlur = false;
 
-// Scuba Cat / Waving Integrator
+// Scuba Cat / Robust Sliding-Window Waving Integrator
 let wavingEnergy = 0;
-let handMovementHistories = new Map(); // handId -> { lastX, lastDir, reversals, sinceChange }
+let waveWristHistory = [];
+const WAVE_WINDOW = 15;
 
 // Real-time 60 FPS Render & Throttled Vision State
 let fpsCounter = 0;
@@ -97,8 +98,6 @@ const FACE_STRIDE = 3;         // BlazeFace runs every 3rd vision tick (~7-10 FP
 
 let lastHeartParticleTime = 0;
 let lastCheekyParticleTime = 0;
-let heartCrownTimer = 0;
-let cheekyCrownTimer = 0;
 
 let latestHandResults = null;
 let latestFaceResults = null;
@@ -315,8 +314,7 @@ function stopCamera() {
     latestFaceResults = null;
     faceTracks = [];
     activeParticles = [];
-    heartCrownTimer = 0;
-    cheekyCrownTimer = 0;
+    waveWristHistory = [];
 
     // Reset Scuba Cat & Audio
     if (catVideoEl) catVideoEl.style.display = 'none';
@@ -542,19 +540,23 @@ function processHandGestures(handResults, now) {
     }
 
     // E. Check Scuba Cat / Waving Gestures
-    // Hand 1 must be touching nose/face, Hand 2 must be waving
+    // Hand 1 must be PINCHING/HOLDING nose, Hand 2 must be an OPEN PALM waving horizontally
     if (faceTracks.length > 0 && hands.length >= 2) {
         let noseHandIdx = -1;
 
-        // Find hand touching face/nose zone
+        // 1. Identify which hand is holding/pinching the nose
         for (let i = 0; i < hands.length; i++) {
             const h = hands[i];
             for (const face of faceTracks) {
-                // Hand wrist, index tip, or thumb tip near face
-                const distCenter = Math.hypot(h[0].x - face.x, h[0].y - face.y);
-                const distTips = Math.hypot(h[8].x - face.x, h[8].y - face.y);
-                const distThumb = Math.hypot(h[4].x - face.x, h[4].y - face.y);
-                if (distCenter < face.w * 1.15 || distTips < face.w * 0.95 || distThumb < face.w * 0.95) {
+                // Fingertip 8 (index) or 4 (thumb) must be close to face center (nose area)
+                const distTip8 = Math.hypot(h[8].x - face.x, h[8].y - face.y);
+                const distTip4 = Math.hypot(h[4].x - face.x, h[4].y - face.y);
+                const atNose = Math.min(distTip8, distTip4) < face.w * 0.50;
+
+                // Nose hand must be a fist/pinch: middle and ring fingers folded into palm
+                const isFisted = isFingerFolded(h, 9, 10, 12) && isFingerFolded(h, 13, 14, 16);
+
+                if (atNose && isFisted) {
                     noseHandIdx = i;
                     break;
                 }
@@ -562,40 +564,83 @@ function processHandGestures(handResults, now) {
             if (noseHandIdx !== -1) break;
         }
 
+        // 2. If a nose-holding hand is found, check the other hand for open-palm horizontal waving
         if (noseHandIdx !== -1) {
-            // Check remaining hand for waving
             const waveHandIdx = noseHandIdx === 0 ? 1 : 0;
             const waveHand = hands[waveHandIdx];
             const waveWrist = waveHand[0];
 
-            let hist = handMovementHistories.get('wavingHand');
-            if (!hist) {
-                hist = { lastX: waveWrist.x, lastDir: 0, reversals: 0 };
-                handMovementHistories.set('wavingHand', hist);
-            }
+            // Waving hand must be OPEN (index and middle fingers extended)
+            const isWaveOpen = isFingerExtended(waveHand, 5, 6, 8) && isFingerExtended(waveHand, 9, 10, 12);
 
-            const dx = waveWrist.x - hist.lastX;
-            hist.lastX = waveWrist.x;
-
-            if (Math.abs(dx) > 0.006) {
-                const dir = dx > 0 ? 1 : -1;
-                if (hist.lastDir !== 0 && dir !== hist.lastDir) {
-                    hist.reversals++;
-                    wavingEnergy = Math.min(100, wavingEnergy + 28); // Fast charge
+            if (isWaveOpen) {
+                waveWristHistory.push({ x: waveWrist.x, y: waveWrist.y });
+                if (waveWristHistory.length > WAVE_WINDOW) {
+                    waveWristHistory.shift();
                 }
-                hist.lastDir = dir;
+
+                if (waveWristHistory.length >= 8) {
+                    let minX = 1.0, maxX = 0.0;
+                    let minY = 1.0, maxY = 0.0;
+                    for (const pt of waveWristHistory) {
+                        if (pt.x < minX) minX = pt.x;
+                        if (pt.x > maxX) maxX = pt.x;
+                        if (pt.y < minY) minY = pt.y;
+                        if (pt.y > maxY) maxY = pt.y;
+                    }
+                    const xSpan = maxX - minX;
+                    const ySpan = maxY - minY;
+
+                    // Direction reversal counting with noise deadband
+                    let reversals = 0;
+                    let confirmedDir = 0;
+                    let accum = 0;
+                    const STEP_THRESHOLD = 0.020;
+
+                    for (let k = 1; k < waveWristHistory.length; k++) {
+                        const dx = waveWristHistory[k].x - waveWristHistory[k - 1].x;
+                        const dir = dx > 0.003 ? 1 : (dx < -0.003 ? -1 : 0);
+                        if (dir === 0) continue;
+
+                        if (confirmedDir === 0) {
+                            confirmedDir = dir;
+                            accum = Math.abs(dx);
+                        } else if (dir !== confirmedDir) {
+                            accum += Math.abs(dx);
+                            if (accum >= STEP_THRESHOLD) {
+                                reversals++;
+                                confirmedDir = dir;
+                                accum = 0;
+                            }
+                        } else {
+                            accum += Math.abs(dx);
+                        }
+                    }
+
+                    // Deliberate horizontal wave: horizontal motion dominates, wide sweep, >=2 reversals
+                    const isConfirmedWave = (xSpan > ySpan) && (xSpan >= faceTracks[0].w * 0.40) && (reversals >= 2);
+
+                    if (isConfirmedWave) {
+                        wavingEnergy = Math.min(100, wavingEnergy + 30);
+                    } else {
+                        wavingEnergy = Math.max(0, wavingEnergy - 4);
+                    }
+                }
             } else {
-                wavingEnergy = Math.max(0, wavingEnergy - 1.2);
+                wavingEnergy = Math.max(0, wavingEnergy - 5);
+                if (waveWristHistory.length > 0) waveWristHistory.shift();
             }
 
-            if (wavingEnergy >= 28) {
+            if (wavingEnergy >= 30) {
                 gestures.scubacat = true;
             }
         } else {
-            wavingEnergy = Math.max(0, wavingEnergy - 2.5);
+            wavingEnergy = Math.max(0, wavingEnergy - 6);
+            waveWristHistory = [];
         }
     } else {
-        wavingEnergy = Math.max(0, wavingEnergy - 2.5);
+        wavingEnergy = Math.max(0, wavingEnergy - 6);
+        waveWristHistory = [];
     }
 
     return gestures;
@@ -685,22 +730,9 @@ function renderScene(handResults, gestures, now) {
         gestures.cheekySpawns = [];
     }
 
-    // Update Crown Gesture Latch Timers (~1.25s at 60 FPS)
-    if (gestures.fingerHeart || gestures.twoHandHeart) {
-        heartCrownTimer = 75;
-    } else if (heartCrownTimer > 0) {
-        heartCrownTimer--;
-    }
-
-    if (gestures.middleFinger) {
-        cheekyCrownTimer = 75;
-    } else if (cheekyCrownTimer > 0) {
-        cheekyCrownTimer--;
-    }
-
-    // E. Draw 3D Halo Crowns (gated on active gesture and UI toggle)
-    const showHeartCrown = checkCrown.checked && (heartCrownTimer > 0);
-    const showCheekyCrown = checkCheeky.checked && (cheekyCrownTimer > 0);
+    // E. Draw 3D Halo Crowns (Permanent as long as UI toggle is turned ON)
+    const showHeartCrown = checkCrown.checked;
+    const showCheekyCrown = checkCheeky.checked;
 
     if ((showHeartCrown || showCheekyCrown) && faceTracks.length > 0) {
         const deltaSec = (now - lastCrownTime) / 1000;
@@ -719,8 +751,8 @@ function renderScene(handResults, gestures, now) {
             draw3DCrown(ctx, fx, fy, fw, fh, crownAngle, crownEmojis);
         }
 
-        // Ambient particles only when crown is actively triggered
-        if (Math.random() < 0.08 && activeParticles.length < 24) {
+        // Ambient particles: subtle floating emojis while halo is enabled
+        if (Math.random() < 0.04 && activeParticles.length < 15) {
             const rx = Math.random() * w;
             const ry = Math.random() * h * 0.7;
             activeParticles.push(new Particle(rx, ry, crownEmojis));
@@ -917,6 +949,20 @@ document.addEventListener('keydown', (e) => {
 });
 
 btnToggle.addEventListener('click', toggleCamera);
+
+// Mutual Exclusivity for Halo Crown Toggles
+if (checkCrown && checkCheeky) {
+    checkCrown.addEventListener('change', () => {
+        if (checkCrown.checked) {
+            checkCheeky.checked = false;
+        }
+    });
+    checkCheeky.addEventListener('change', () => {
+        if (checkCheeky.checked) {
+            checkCrown.checked = false;
+        }
+    });
+}
 
 // Startup Initialization
 window.addEventListener('DOMContentLoaded', () => {

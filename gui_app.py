@@ -215,8 +215,7 @@ class FotoKitaBlurApp:
         self.particles = []
         self.crown_angle = 0.0
         self.last_crown_time = time.perf_counter()
-        self.heart_crown_timer = 0
-        self.cheeky_crown_timer = 0
+        self.wave_history = []
 
         # Load Scuba Cat GIF frames
         self.cat_frames = []
@@ -598,13 +597,11 @@ class FotoKitaBlurApp:
                 lms = hand.landmark
                 if PeaceBlurDetector.is_middle_finger(lms):
                     middle_finger_detected = True
-                    self.cheeky_crown_timer = 45
                     gx = lms[12].x * w
                     gy = lms[12].y * h
                     cheeky_spawns.append((gx, gy))
 
                 if PeaceBlurDetector.is_finger_heart(lms):
-                    self.heart_crown_timer = 45
                     gx = (lms[8].x + lms[4].x) / 2.0 * w
                     gy = (lms[8].y + lms[4].y) / 2.0 * h
                     finger_heart_spawns.append((gx, gy))
@@ -622,7 +619,6 @@ class FotoKitaBlurApp:
                     hands_landmarks[0].landmark, hands_landmarks[1].landmark
                 )
                 if two_res:
-                    self.heart_crown_timer = 45
                     two_hand_heart_spawn = (two_res["x"] * w, two_res["y"] * h)
 
             # Check Scuba Cat (Nose Hold + Waving)
@@ -632,33 +628,76 @@ class FotoKitaBlurApp:
 
                 for i, hand in enumerate(hands_landmarks):
                     hl = hand.landmark
-                    dist_face = math.hypot(hl[0].x - fcx, hl[0].y - fcy)
-                    dist_tip = math.hypot(hl[8].x - fcx, hl[8].y - fcy)
-                    dist_thumb = math.hypot(hl[4].x - fcx, hl[4].y - fcy)
-                    if dist_face < fw * 1.15 or dist_tip < fw * 0.95 or dist_thumb < fw * 0.95:
+                    # Fingertip 8 or 4 close to face center (nose area)
+                    dist_tip8 = math.hypot(hl[8].x - fcx, hl[8].y - fcy)
+                    dist_tip4 = math.hypot(hl[4].x - fcx, hl[4].y - fcy)
+                    at_nose = min(dist_tip8, dist_tip4) < fw * 0.50
+                    # Nose hand must be fisted/pinched (middle & ring folded into palm)
+                    is_fisted = (
+                        not is_finger_extended(hl, 9, 10, 12) and
+                        not is_finger_extended(hl, 13, 14, 16)
+                    )
+                    if at_nose and is_fisted:
                         nose_hand_idx = i
                         break
 
                 if nose_hand_idx != -1:
                     wave_hand = hands_landmarks[0 if nose_hand_idx == 1 else 1].landmark
-                    wave_wrist_x = wave_hand[0].x
-                    if self.last_wrist_x is not None:
-                        dx = wave_wrist_x - self.last_wrist_x
-                        if abs(dx) > 0.006:
-                            d = 1 if dx > 0 else -1
-                            if self.last_dir != 0 and d != self.last_dir:
-                                self.waving_energy = min(100.0, self.waving_energy + 28.0)
-                            self.last_dir = d
-                        else:
-                            self.waving_energy = max(0.0, self.waving_energy - 1.2)
-                    self.last_wrist_x = wave_wrist_x
+                    # Waving hand must be OPEN (index and middle fingers extended)
+                    wave_open = (
+                        is_finger_extended(wave_hand, 5, 6, 8) and
+                        is_finger_extended(wave_hand, 9, 10, 12)
+                    )
+                    if wave_open:
+                        wave_wrist = wave_hand[0]
+                        self.wave_history.append((wave_wrist.x, wave_wrist.y))
+                        if len(self.wave_history) > 15:
+                            self.wave_history.pop(0)
 
-                    if self.waving_energy >= 28.0:
+                        if len(self.wave_history) >= 8:
+                            xs = [pt[0] for pt in self.wave_history]
+                            ys = [pt[1] for pt in self.wave_history]
+                            x_span = max(xs) - min(xs)
+                            y_span = max(ys) - min(ys)
+
+                            reversals = 0
+                            confirmed_dir = 0
+                            accum = 0.0
+                            for k in range(1, len(self.wave_history)):
+                                dx = self.wave_history[k][0] - self.wave_history[k - 1][0]
+                                d = 1 if dx > 0.003 else (-1 if dx < -0.003 else 0)
+                                if d == 0:
+                                    continue
+                                if confirmed_dir == 0:
+                                    confirmed_dir = d
+                                    accum = abs(dx)
+                                elif d != confirmed_dir:
+                                    accum += abs(dx)
+                                    if accum >= 0.020:
+                                        reversals += 1
+                                        confirmed_dir = d
+                                        accum = 0.0
+                                else:
+                                    accum += abs(dx)
+
+                            is_confirmed_wave = (x_span > y_span) and (x_span >= fw * 0.40) and (reversals >= 2)
+                            if is_confirmed_wave:
+                                self.waving_energy = min(100.0, self.waving_energy + 30.0)
+                            else:
+                                self.waving_energy = max(0.0, self.waving_energy - 4.0)
+                    else:
+                        self.waving_energy = max(0.0, self.waving_energy - 5.0)
+                        if self.wave_history:
+                            self.wave_history.pop(0)
+
+                    if self.waving_energy >= 30.0:
                         self.scubacat_hold_frames = 20
                 else:
-                    self.waving_energy = max(0.0, self.waving_energy - 2.5)
+                    self.waving_energy = max(0.0, self.waving_energy - 6.0)
+                    self.wave_history = []
             else:
-                self.waving_energy = max(0.0, self.waving_energy - 2.5)
+                self.waving_energy = max(0.0, self.waving_energy - 6.0)
+                self.wave_history = []
         else:
             for lbl in self.diag_badges.values():
                 lbl.config(text="FOLDED", fg="#5f5f6e")
@@ -714,14 +753,9 @@ class FotoKitaBlurApp:
             if p.is_alive:
                 draw.text((int(p.x), int(p.y)), p.emoji, font=self.emoji_font, embedded_color=True)
 
-        # 6. Draw 3D Halo Crown
-        if self.heart_crown_timer > 0:
-            self.heart_crown_timer -= 1
-        if self.cheeky_crown_timer > 0:
-            self.cheeky_crown_timer -= 1
-
-        show_crown = self.var_crown.get() and (self.heart_crown_timer > 0)
-        show_cheeky = self.var_cheeky.get() and (self.cheeky_crown_timer > 0)
+        # 6. Draw 3D Halo Crown (Permanent per toggle switch)
+        show_crown = self.var_crown.get()
+        show_cheeky = self.var_cheeky.get()
 
         if (show_crown or show_cheeky) and self.tracked_face is not None:
             delta = now - self.last_crown_time

@@ -425,3 +425,28 @@ from a light touch / non-gesture.
    - Expanded nose/face touch acceptance radius to `distCenter < face.w * 1.15 || distTips < face.w * 0.95 || distThumb < face.w * 0.95`.
    - Lowered wave movement threshold to `Math.abs(dx) > 0.006` and threshold to `wavingEnergy >= 28`, guaranteeing immediate Scuba Cat trigger on 1-2 wave cycles.
    - Applied identical logic to Python desktop app `gui_app.py`.
+
+## FIX-45 — Permanent Toggle Crown Activation & Robust Scuba Cat Noise Immunity
+
+**Date:** 2026-09-08
+**Files:** `static/main.js`, `templates/index.html`, `gui_app.py`
+
+### Root Causes
+1. **Scuba Cat False Triggering on Subtle Movement:**
+   - The nose-touch gate was overly broad (`face.w * 1.15`), matching hands resting near the chin, neck, or chest without requiring a fisted nose-pinch pose.
+   - Single-frame differential movement (`dx > 0.006`) with an instant `+28` energy gain caused random webcam jitter or slight hand twitches to trigger the Scuba Cat jumpscare.
+2. **Crown Gated Behind Gestures Rather Than Permanent UI Toggle:**
+   - The user expects the 3D rotating halo crown to stay permanently visible hovering above their head whenever the toggle switch ("Mahkota Love" or "Mahkota Jahil") is turned ON, rather than disappearing when not making gestures.
+
+### Solutions Implemented
+1. **Permanent Toggle-Driven Halo Crown:**
+   - Restored permanent crown rendering whenever `checkCrown.checked` or `checkCheeky.checked` is enabled, hovering consistently above the cranium.
+   - Added mutual exclusivity between "Mahkota Love Halo" and "Mahkota Jari Tengah Halo".
+   - Gesture executions (Finger Heart, Two-Hand Heart, Middle Finger) continue to emit particle bursts from fingertips.
+2. **Robust Scuba Cat Multi-Condition Validation:**
+   - Nose hand must be a fisted pinch (`isFingerFolded` on middle and ring fingers) with fingertip 8 or 4 within `face.w * 0.50` of the nose center.
+   - Waving hand must be an open palm (`isFingerExtended` on index and middle fingers).
+   - Waving requires a 15-frame sliding window with horizontal dominance (`xSpan > ySpan`), wide sweep (`xSpan >= face.w * 0.40`), and at least 2 deliberate back-and-forth direction reversals (`reversals >= 2`).
+   - Slight hand movements, resting hands, and head twitches are 100% rejected.
+3. **Parity Applied to Desktop Application (`gui_app.py`):**
+   - Synced permanent toggle crown and robust wave history window to `gui_app.py`.
