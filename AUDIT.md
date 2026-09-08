@@ -343,3 +343,35 @@ from a light touch / non-gesture.
 3. **Optimized Emoji Canvas Cache (`static/particles.js`):**
    - Size quantization in `getEmojiCanvas` to even pixel steps to maximize cache hits and eliminate redundant offscreen canvas instantiations.
 
+## FIX-42 — Web Gesture FPS Drop Elimination & Middle Finger / Peace Disambiguation
+
+**Date:** 2026-09-08
+**Files:** `static/gestures.js`, `static/main.js`, `static/particles.js`, `static/style.css`, `blur.py`, `gui_app.py`, `tests/gestures.test.mjs`, `tests/test_blur.py`
+
+### Root Causes
+1. **Severe FPS Drop to 10 FPS on Active Gesture:**
+   - Sequential execution of `runVisionInference` inside `processNextFrame` caused back-to-back blocking: when hand landmarking took ~50ms, `now - lastDetectTime` was immediately `>= 32ms` on the next frame, running inference on 100% of render frames and starving vsync.
+   - Input to MediaPipe was the full raw `<video>` element, requiring heavy downsampling and WebGL texture copies on every inference.
+   - Continuous CSS `transition: filter 0.2s` on `#output-canvas` forced Chrome GPU compositor to reallocate intermediate Gaussian blur textures on active canvas rendering.
+   - Particles were instantiated via offscreen canvas elements calling `document.createElement('canvas')` and `drawImage` repeatedly without rate limits.
+2. **Two-Hand Middle Finger Triggering Peace Blur:**
+   - In `isPeace()`, folded index fingers with slightly loose knuckles or tilted wrists met the threshold `distTipMcp > distPipMcp * 1.15`, while `fingerSeparation` between middle tip and curled index tip passed easily.
+   - `isPeace()` lacked checks comparing index reach against middle reach (`middleReach / indexReach < 1.25`).
+   - `isPeace()` ran before `isMiddleFinger()` in gesture evaluation without mutual exclusion.
+
+### Solutions Implemented
+1. **Hardware-Accelerated Downsampled Vision Input (`static/main.js`):**
+   - Dedicated offscreen canvas (`visionInputCanvas`, 480x270) downsamples camera frames in 0.2ms before passing to MediaPipe WebAssembly.
+   - Enforced non-blocking gap `nextDetectTime = performance.now() + 45ms` (~20 FPS vision detection) so the 60 FPS render loop is never starved.
+2. **Direct 2D Canvas Emoji Rendering (`static/particles.js`):**
+   - Replaced offscreen canvas DOM creations with native `ctx.fillText(this.emoji, 0, 0)` in `Particle.draw()`, eliminating texture allocations and CPU DirectWrite spikes.
+   - Rate-limited particle burst emissions to 120ms with natural dispersal velocity and a strict active particle cap of 20.
+3. **GPU Layer Promotion & Removal of Filter Transition (`static/style.css`):**
+   - Added `will-change: filter; transform: translateZ(0);` and removed `transition: filter` from `#output-canvas`, eliminating compositor thrashing during blur activation.
+4. **Middle Finger / Peace Disambiguation (`static/gestures.js`, `blur.py`, `gui_app.py`):**
+   - Added strict guard `if (isMiddleFinger(landmarks)) return false;` inside `isPeace()`.
+   - Verified that index reach and middle reach are balanced (`reachRatio <= 1.25` and `indexReach >= 0.80 * palmSize`).
+   - In `processHandGestures()`, evaluated middle finger across all hands first; if any hand displays middle finger, peace gesture is strictly suppressed.
+   - Added regression test cases to `tests/gestures.test.mjs` and `tests/test_blur.py`.
+
+

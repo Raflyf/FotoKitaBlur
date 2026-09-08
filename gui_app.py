@@ -590,21 +590,27 @@ class FotoKitaBlurApp:
                 fg="#10b981" if is_finger_extended(h0, 17, 18, 20) else "#5f5f6e"
             )
 
-            # Check individual hands
+            # Check individual hands: Middle finger takes strict precedence over peace
+            middle_finger_detected = False
             for hand in hands_landmarks:
                 lms = hand.landmark
-                if PeaceBlurDetector.is_peace(lms):
-                    peace_detected = True
+                if PeaceBlurDetector.is_middle_finger(lms):
+                    middle_finger_detected = True
+                    gx = lms[12].x * w
+                    gy = lms[12].y * h
+                    cheeky_spawns.append((gx, gy))
 
                 if PeaceBlurDetector.is_finger_heart(lms):
                     gx = (lms[8].x + lms[4].x) / 2.0 * w
                     gy = (lms[8].y + lms[4].y) / 2.0 * h
                     finger_heart_spawns.append((gx, gy))
 
-                if PeaceBlurDetector.is_middle_finger(lms):
-                    gx = lms[12].x * w
-                    gy = lms[12].y * h
-                    cheeky_spawns.append((gx, gy))
+            # Only check peace if NO hand is showing middle finger
+            if not middle_finger_detected:
+                for hand in hands_landmarks:
+                    if PeaceBlurDetector.is_peace(hand.landmark):
+                        peace_detected = True
+                        break
 
             # Two-Hand Heart
             if len(hands_landmarks) >= 2:

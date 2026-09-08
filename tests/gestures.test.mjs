@@ -77,6 +77,11 @@ function crossedFingerHeartHand() {
 test("strict peace detected", () => assert.equal(isPeace(peaceHand()), true));
 test("fist rejected as peace", () => assert.equal(isPeace(fistHand()), false));
 test("middle finger rejected as peace", () => assert.equal(isPeace(middleFingerHand()), false));
+test("middle finger with loose index rejected as peace", () => {
+    const hand = middleFingerHand();
+    hand[8] = { x: 0.10, y: -0.30 }; // Index tip reaching half height of middle finger
+    assert.equal(isPeace(hand), false);
+});
 test("degenerate palm rejected as peace", () => {
     assert.equal(isPeace(Array.from({ length: 21 }, () => ({ x: 0, y: 0 }))), false);
 });

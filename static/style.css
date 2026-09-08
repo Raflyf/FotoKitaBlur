@@ -150,7 +150,8 @@ body {
     height: 100%;
     object-fit: contain;
     display: block;
-    transition: filter 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: filter;
+    transform: translateZ(0);
 }
 
 .placeholder {

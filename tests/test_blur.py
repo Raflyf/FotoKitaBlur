@@ -117,6 +117,11 @@ class TestIsPeace(unittest.TestCase):
     def test_middle_finger_rejected(self):
         self.assertIs(PeaceBlurDetector.is_peace(middle_finger_hand()), False)
 
+    def test_middle_finger_with_loose_index_rejected(self):
+        hand = middle_finger_hand()
+        hand[INDEX_T] = lm(0.10, -0.30)
+        self.assertIs(PeaceBlurDetector.is_peace(hand), False)
+
     def test_degenerate_palm_rejected(self):
         degenerate = [lm(0.0, 0.0) for _ in range(21)]
         self.assertIs(PeaceBlurDetector.is_peace(degenerate), False)

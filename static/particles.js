@@ -1,41 +1,15 @@
-// Particle and 3D Halo Crown Animation System
-
-const emojiCanvasCache = new Map();
-
-/**
- * Pre-renders an emoji to an offscreen canvas for fast GPU-accelerated drawImage.
- */
-export function getEmojiCanvas(emoji, targetSize) {
-    const size = Math.max(12, Math.min(128, Math.round(targetSize / 2) * 2));
-    const key = `${emoji}_${size}`;
-    let cached = emojiCanvasCache.get(key);
-    if (cached) return cached;
-
-    const pad = Math.ceil(size * 0.35);
-    const c = document.createElement('canvas');
-    c.width = size + pad * 2;
-    c.height = size + pad * 2;
-    const ctx = c.getContext('2d');
-
-    ctx.font = `${size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(emoji, c.width / 2, c.height / 2);
-
-    emojiCanvasCache.set(key, c);
-    return c;
-}
+// Particle and 3D Halo Crown Animation System (Direct Canvas Rendering)
 
 export class Particle {
     constructor(x, y, emojis = ['💖', '❤️', '💕', '💗', '💓', '💝']) {
         this.x = x;
         this.y = y;
         this.emoji = emojis[Math.floor(Math.random() * emojis.length)];
-        this.size = Math.random() * 16 + 22;
+        this.size = Math.round(Math.random() * 8 + 26);
         this.opacity = 1.0;
-        this.fadeRate = Math.random() * 0.025 + 0.018;
-        this.vx = (Math.random() - 0.5) * 2.4;
-        this.vy = -(Math.random() * 2.8 + 2.0);
+        this.fadeRate = Math.random() * 0.024 + 0.022; // ~40 frames life
+        this.vx = (Math.random() - 0.5) * 3.6;         // Dispersal velocity
+        this.vy = -(Math.random() * 3.4 + 2.4);        // Upward buoyancy
         this.rotation = (Math.random() - 0.5) * 0.4;
         this.angularVel = (Math.random() - 0.5) * 0.05;
         this.scale = 0.5;
@@ -45,9 +19,11 @@ export class Particle {
     update() {
         this.x += this.vx;
         this.y += this.vy;
-        this.vy += 0.04; // Gentle gravity or upward buoyancy dampener
+        this.vy += 0.035; // Gentle upward deceleration
         this.rotation += this.angularVel;
-        this.scale += (this.targetScale - this.scale) * 0.15;
+        if (this.scale < this.targetScale) {
+            this.scale += 0.10;
+        }
         this.opacity -= this.fadeRate;
     }
 
@@ -59,8 +35,10 @@ export class Particle {
         ctx.rotate(this.rotation);
         ctx.scale(this.scale, this.scale);
 
-        const img = getEmojiCanvas(this.emoji, this.size);
-        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+        ctx.font = `${this.size}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.emoji, 0, 0);
         ctx.restore();
     }
 }
@@ -86,7 +64,7 @@ export function draw3DCrown(ctx, faceCenterX, faceCenterY, faceWidth, faceHeight
         const hx = faceCenterX + cosA * rx;
         const hy = cy + sinA * ry;
         const depthScale = 0.80 + sinA * 0.28; // Depth perspective: front items (sin > 0) are larger
-        const size = (faceWidth * 0.18) * depthScale;
+        const size = Math.round((faceWidth * 0.18) * depthScale);
         const opacity = 0.70 + sinA * 0.30;    // Front items are crisper
 
         items.push({
@@ -105,8 +83,10 @@ export function draw3DCrown(ctx, faceCenterX, faceCenterY, faceWidth, faceHeight
     for (const item of items) {
         ctx.save();
         ctx.globalAlpha = Math.max(0.1, Math.min(1.0, item.opacity));
-        const img = getEmojiCanvas(item.emoji, item.size);
-        ctx.drawImage(img, item.x - img.width / 2, item.y - img.height / 2);
+        ctx.font = `${item.size}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(item.emoji, item.x, item.y);
         ctx.restore();
     }
 }

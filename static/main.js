@@ -89,11 +89,20 @@ let fpsCounter = 0;
 let lastFpsTime = performance.now();
 let displayFps = 0;
 
+// High-Speed Downsampled Offscreen Vision Canvas
+const visionInputCanvas = document.createElement('canvas');
+visionInputCanvas.width = 480;
+visionInputCanvas.height = 270;
+const visionInputCtx = visionInputCanvas.getContext('2d', { willReadFrequently: true });
+
 let isDetecting = false;
-let lastDetectTime = 0;
+let nextDetectTime = 0;
 let faceInferenceCounter = 0;
-const VISION_INTERVAL_MS = 32; // ~30 FPS vision sampling
-const FACE_STRIDE = 3;         // BlazeFace runs every 3rd vision tick (~10 FPS)
+const VISION_MIN_GAP_MS = 45; // Enforce minimum 45ms gap between vision runs (~20 FPS detection rate)
+const FACE_STRIDE = 3;         // BlazeFace runs every 3rd vision tick (~7-10 FPS)
+
+let lastHeartParticleTime = 0;
+let lastCheekyParticleTime = 0;
 
 let latestHandResults = null;
 let latestFaceResults = null;
@@ -319,8 +328,8 @@ function processNextFrame(now = performance.now()) {
         if (hudFps) hudFps.textContent = `FPS: ${displayFps}`;
     }
 
-    // Run AI Inference throttled at ~30 FPS without stacking or blocking
-    if (video.readyState >= 2 && !isDetecting && (now - lastDetectTime >= VISION_INTERVAL_MS)) {
+    // Trigger AI inference only when the non-blocking inter-frame gap has elapsed
+    if (video.readyState >= 2 && !isDetecting && now >= nextDetectTime) {
         runVisionInference(now);
     }
 
@@ -333,18 +342,20 @@ function processNextFrame(now = performance.now()) {
 function runVisionInference(now) {
     if (!handLandmarker || isDetecting) return;
     isDetecting = true;
-    lastDetectTime = now;
 
     try {
-        // Run Hand Landmarker (~8ms on 640x360)
-        const handResults = handLandmarker.detectForVideo(video, now);
+        // Fast hardware downscale to 480x270 offscreen canvas (dramatically lowers TFLite/WASM load)
+        visionInputCtx.drawImage(video, 0, 0, visionInputCanvas.width, visionInputCanvas.height);
+
+        // Run Hand Landmarker on downsampled input
+        const handResults = handLandmarker.detectForVideo(visionInputCanvas, now);
         latestHandResults = handResults;
 
-        // Run Face Detector interleaved (every 3rd vision tick = ~10 FPS)
+        // Run Face Detector interleaved (every 3rd vision tick = ~7-10 FPS)
         faceInferenceCounter++;
         const shouldDetectFace = (faceTracks.length === 0) || (faceInferenceCounter % FACE_STRIDE === 0);
         if (faceDetector && shouldDetectFace) {
-            const faceResults = faceDetector.detectForVideo(video, now);
+            const faceResults = faceDetector.detectForVideo(visionInputCanvas, now);
             latestFaceResults = faceResults;
             updateFaceTracks(faceResults);
         }
@@ -355,6 +366,8 @@ function runVisionInference(now) {
         console.warn("Detection frame skipped:", inferErr);
     } finally {
         isDetecting = false;
+        // Guarantee that the next inference never starves the 60 FPS render loop
+        nextDetectTime = performance.now() + VISION_MIN_GAP_MS;
     }
 }
 
@@ -457,11 +470,13 @@ function processHandGestures(handResults, now) {
     updateFingerUI('ring', isFingerExtended(h0, 13, 14, 16));
     updateFingerUI('pinky', isFingerExtended(h0, 17, 18, 20));
 
-    // A. Check Peace Sign (✌️)
+    // A. Check Middle Finger (🖕) FIRST across all hands
+    let middleFingerActive = false;
     for (const hand of hands) {
-        if (isPeace(hand)) {
-            gestures.peace = true;
-            break;
+        if (isMiddleFinger(hand)) {
+            middleFingerActive = true;
+            gestures.middleFinger = true;
+            gestures.cheekySpawns.push({ x: hand[12].x, y: hand[12].y });
         }
     }
 
@@ -475,11 +490,13 @@ function processHandGestures(handResults, now) {
         }
     }
 
-    // C. Check Middle Finger (🖕)
-    for (const hand of hands) {
-        if (isMiddleFinger(hand)) {
-            gestures.middleFinger = true;
-            gestures.cheekySpawns.push({ x: hand[12].x, y: hand[12].y });
+    // C. Check Peace Sign (✌️) ONLY IF NO HAND is showing middle finger!
+    if (!middleFingerActive) {
+        for (const hand of hands) {
+            if (isPeace(hand)) {
+                gestures.peace = true;
+                break;
+            }
         }
     }
 
@@ -606,24 +623,30 @@ function renderScene(handResults, gestures, now) {
 
     ctx.restore(); // Restore unmirrored coordinate space for text & particles!
 
-    // D. Spawn Fingertip Particles (consume immediately to avoid duplication across 60 FPS render frames)
+    // D. Spawn Fingertip Particles (rate-limited burst so emojis disperse gracefully)
     if (gestures.heartSpawns && gestures.heartSpawns.length > 0) {
-        for (const pt of gestures.heartSpawns) {
-            if (activeParticles.length < 30) {
-                const sx = (1.0 - pt.x) * w;
-                const sy = pt.y * h;
-                activeParticles.push(new Particle(sx, sy, ['💖', '❤️', '💕', '💗', '💓', '💝']));
+        if (now - lastHeartParticleTime >= 120) {
+            lastHeartParticleTime = now;
+            for (const pt of gestures.heartSpawns) {
+                if (activeParticles.length < 20) {
+                    const sx = (1.0 - pt.x) * w;
+                    const sy = pt.y * h;
+                    activeParticles.push(new Particle(sx, sy, ['💖', '❤️', '💕', '💗', '💓', '💝']));
+                }
             }
         }
         gestures.heartSpawns = [];
     }
 
     if (gestures.cheekySpawns && gestures.cheekySpawns.length > 0) {
-        for (const pt of gestures.cheekySpawns) {
-            if (activeParticles.length < 30) {
-                const sx = (1.0 - pt.x) * w;
-                const sy = pt.y * h;
-                activeParticles.push(new Particle(sx, sy, ['🖕', '😜', '🤪', '😝', '👅']));
+        if (now - lastCheekyParticleTime >= 120) {
+            lastCheekyParticleTime = now;
+            for (const pt of gestures.cheekySpawns) {
+                if (activeParticles.length < 20) {
+                    const sx = (1.0 - pt.x) * w;
+                    const sy = pt.y * h;
+                    activeParticles.push(new Particle(sx, sy, ['🖕', '😜', '🤪', '😝', '👅']));
+                }
             }
         }
         gestures.cheekySpawns = [];

@@ -91,6 +91,10 @@ class PeaceBlurDetector:
         if palm_size < 0.015:
             return False
 
+        # Strict guard: Middle finger gesture can NEVER be peace
+        if PeaceBlurDetector.is_middle_finger(landmarks):
+            return False
+
         index_up = is_finger_extended(landmarks, 5, 6, 8)
         middle_up = is_finger_extended(landmarks, 9, 10, 12)
         ring_folded = is_finger_folded(landmarks, 13, 14, 16)
@@ -99,12 +103,27 @@ class PeaceBlurDetector:
         if not (index_up and middle_up and ring_folded and pinky_folded):
             return False
 
+        # Both index and middle reach from wrist must be genuinely extended
+        index_reach = get_distance(landmarks[8], wrist)
+        middle_reach = get_distance(landmarks[12], wrist)
+        if index_reach < palm_size * 0.80 or middle_reach < palm_size * 0.80:
+            return False
+
+        # In a peace sign, middle finger reach cannot dwarf index finger reach
+        reach_ratio = middle_reach / max(0.001, index_reach)
+        if reach_ratio > 1.25 or reach_ratio < 0.75:
+            return False
+
+        # Index tip must be significantly extended from its MCP knuckle
+        if get_distance(landmarks[8], landmarks[5]) < palm_size * 0.50:
+            return False
+
         finger_sep = get_distance(landmarks[8], landmarks[12])
         if finger_sep < palm_size * 0.18:
             return False
 
         thumb_dist = get_distance(landmarks[4], wrist)
-        if thumb_dist > palm_size * 1.45 and thumb_dist > get_distance(landmarks[8], wrist) * 0.9:
+        if thumb_dist > palm_size * 1.45 and thumb_dist > index_reach * 0.9:
             return False
 
         return True

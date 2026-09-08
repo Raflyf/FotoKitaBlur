@@ -60,6 +60,9 @@ export function isPeace(landmarks) {
     const palmSize = getDistance(landmarks[0], landmarks[9]);
     if (palmSize < 0.015) return false;
 
+    // Strict guard: Middle finger gesture can NEVER be peace
+    if (isMiddleFinger(landmarks)) return false;
+
     const indexUp = isFingerExtended(landmarks, 5, 6, 8);
     const middleUp = isFingerExtended(landmarks, 9, 10, 12);
     const ringFolded = isFingerFolded(landmarks, 13, 14, 16);
@@ -67,13 +70,25 @@ export function isPeace(landmarks) {
 
     if (!indexUp || !middleUp || !ringFolded || !pinkyFolded) return false;
 
+    // Both index and middle reach from wrist must be genuinely extended
+    const indexReach = getDistance(landmarks[8], wrist);
+    const middleReach = getDistance(landmarks[12], wrist);
+    if (indexReach < palmSize * 0.80 || middleReach < palmSize * 0.80) return false;
+
+    // In a peace sign, middle finger reach cannot dwarf index finger reach
+    const reachRatio = middleReach / Math.max(0.001, indexReach);
+    if (reachRatio > 1.25 || reachRatio < 0.75) return false;
+
+    // Index tip must be significantly extended from its MCP knuckle
+    if (getDistance(landmarks[8], landmarks[5]) < palmSize * 0.50) return false;
+
     // Fingers must have angular or spatial separation
     const fingerSeparation = getDistance(landmarks[8], landmarks[12]);
     if (fingerSeparation < palmSize * 0.18) return false;
 
     // Thumb must not be extended outward as in a three-finger sign
     const thumbDist = getDistance(landmarks[4], wrist);
-    if (thumbDist > palmSize * 1.45 && thumbDist > getDistance(landmarks[8], wrist) * 0.9) {
+    if (thumbDist > palmSize * 1.45 && thumbDist > indexReach * 0.9) {
         return false;
     }
 
