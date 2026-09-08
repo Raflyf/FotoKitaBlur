@@ -51,9 +51,9 @@ export function draw3DCrown(ctx, faceCenterX, faceCenterY, faceWidth, faceHeight
     if (!emojis || emojis.length === 0) return;
 
     const numItems = 6;
-    const rx = faceWidth * 0.62;        // Horizontal orbital radius
-    const ry = faceHeight * 0.15;       // Vertical orbital radius (perspective tilt)
-    const cy = faceCenterY - faceHeight * 0.88; // Floating comfortably above top of head/hair
+    const rx = faceWidth * 0.58;        // Horizontal orbital radius
+    const ry = faceHeight * 0.12;       // Vertical orbital radius (perspective tilt)
+    const cy = faceCenterY - faceHeight * 0.72; // Floating comfortably above top of head/hair
 
     // Compute items and sort by depth (Z-order)
     const items = [];

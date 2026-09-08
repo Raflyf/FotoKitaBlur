@@ -1,7 +1,7 @@
 // Foto Kita Blur - Real-time AI Vision & Gesture Processing Engine
 import { FilesetResolver, HandLandmarker, FaceDetector } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended } from "./gestures.js?v=4";
-import { Particle, draw3DCrown } from "./particles.js?v=4";
+import { getDistance, isPeace, isMiddleFinger, isFingerHeart, isTwoHandHeart, isFingerExtended } from "./gestures.js?v=5";
+import { Particle, draw3DCrown } from "./particles.js?v=5";
 
 // Global Vision Models & State
 let handLandmarker = null;
@@ -89,12 +89,6 @@ let fpsCounter = 0;
 let lastFpsTime = performance.now();
 let displayFps = 0;
 
-// High-Speed Downsampled Offscreen Vision Canvas
-const visionInputCanvas = document.createElement('canvas');
-visionInputCanvas.width = 480;
-visionInputCanvas.height = 270;
-const visionInputCtx = visionInputCanvas.getContext('2d', { willReadFrequently: true });
-
 let isDetecting = false;
 let nextDetectTime = 0;
 let faceInferenceCounter = 0;
@@ -103,6 +97,8 @@ const FACE_STRIDE = 3;         // BlazeFace runs every 3rd vision tick (~7-10 FP
 
 let lastHeartParticleTime = 0;
 let lastCheekyParticleTime = 0;
+let heartCrownTimer = 0;
+let cheekyCrownTimer = 0;
 
 let latestHandResults = null;
 let latestFaceResults = null;
@@ -319,6 +315,8 @@ function stopCamera() {
     latestFaceResults = null;
     faceTracks = [];
     activeParticles = [];
+    heartCrownTimer = 0;
+    cheekyCrownTimer = 0;
 
     // Reset Scuba Cat & Audio
     if (catVideoEl) catVideoEl.style.display = 'none';
@@ -374,22 +372,19 @@ function processNextFrame(now = performance.now()) {
 }
 
 function runVisionInference(now) {
-    if (!handLandmarker || isDetecting) return;
+    if (!handLandmarker || isDetecting || !video.videoWidth) return;
     isDetecting = true;
 
     try {
-        // Fast hardware downscale to 480x270 offscreen canvas (dramatically lowers TFLite/WASM load)
-        visionInputCtx.drawImage(video, 0, 0, visionInputCanvas.width, visionInputCanvas.height);
-
-        // Run Hand Landmarker on downsampled input
-        const handResults = handLandmarker.detectForVideo(visionInputCanvas, now);
+        // Run Hand Landmarker directly on native video element
+        const handResults = handLandmarker.detectForVideo(video, now);
         latestHandResults = handResults;
 
         // Run Face Detector interleaved (every 3rd vision tick = ~7-10 FPS)
         faceInferenceCounter++;
         const shouldDetectFace = (faceTracks.length === 0) || (faceInferenceCounter % FACE_STRIDE === 0);
         if (faceDetector && shouldDetectFace) {
-            const faceResults = faceDetector.detectForVideo(visionInputCanvas, now);
+            const faceResults = faceDetector.detectForVideo(video, now);
             latestFaceResults = faceResults;
             updateFaceTracks(faceResults);
         }
@@ -410,14 +405,17 @@ function runVisionInference(now) {
 // ==========================================
 function updateFaceTracks(faceResults) {
     const rawFaces = [];
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 480;
+
     if (faceResults && faceResults.detections) {
         for (const d of faceResults.detections) {
             const b = d.boundingBox;
             rawFaces.push({
-                x: (b.originX + b.width / 2) / video.videoWidth,
-                y: (b.originY + b.height / 2) / video.videoHeight,
-                w: b.width / video.videoWidth,
-                h: b.height / video.videoHeight
+                x: (b.originX + b.width / 2) / vw,
+                y: (b.originY + b.height / 2) / vh,
+                w: b.width / vw,
+                h: b.height / vh
             });
         }
     }
@@ -552,10 +550,11 @@ function processHandGestures(handResults, now) {
         for (let i = 0; i < hands.length; i++) {
             const h = hands[i];
             for (const face of faceTracks) {
-                // Hand wrist or tips near face
+                // Hand wrist, index tip, or thumb tip near face
                 const distCenter = Math.hypot(h[0].x - face.x, h[0].y - face.y);
                 const distTips = Math.hypot(h[8].x - face.x, h[8].y - face.y);
-                if (distCenter < face.w * 0.95 || distTips < face.w * 0.75) {
+                const distThumb = Math.hypot(h[4].x - face.x, h[4].y - face.y);
+                if (distCenter < face.w * 1.15 || distTips < face.w * 0.95 || distThumb < face.w * 0.95) {
                     noseHandIdx = i;
                     break;
                 }
@@ -578,25 +577,25 @@ function processHandGestures(handResults, now) {
             const dx = waveWrist.x - hist.lastX;
             hist.lastX = waveWrist.x;
 
-            if (Math.abs(dx) > 0.008) {
+            if (Math.abs(dx) > 0.006) {
                 const dir = dx > 0 ? 1 : -1;
                 if (hist.lastDir !== 0 && dir !== hist.lastDir) {
                     hist.reversals++;
-                    wavingEnergy = Math.min(100, wavingEnergy + 24); // Fast charge
+                    wavingEnergy = Math.min(100, wavingEnergy + 28); // Fast charge
                 }
                 hist.lastDir = dir;
             } else {
-                wavingEnergy = Math.max(0, wavingEnergy - 1.5);
+                wavingEnergy = Math.max(0, wavingEnergy - 1.2);
             }
 
-            if (wavingEnergy >= 40) {
+            if (wavingEnergy >= 28) {
                 gestures.scubacat = true;
             }
         } else {
-            wavingEnergy = Math.max(0, wavingEnergy - 3);
+            wavingEnergy = Math.max(0, wavingEnergy - 2.5);
         }
     } else {
-        wavingEnergy = Math.max(0, wavingEnergy - 3);
+        wavingEnergy = Math.max(0, wavingEnergy - 2.5);
     }
 
     return gestures;
@@ -686,9 +685,22 @@ function renderScene(handResults, gestures, now) {
         gestures.cheekySpawns = [];
     }
 
-    // E. Draw 3D Halo Crowns (Manual Toggles)
-    const showHeartCrown = checkCrown.checked;
-    const showCheekyCrown = checkCheeky.checked;
+    // Update Crown Gesture Latch Timers (~1.25s at 60 FPS)
+    if (gestures.fingerHeart || gestures.twoHandHeart) {
+        heartCrownTimer = 75;
+    } else if (heartCrownTimer > 0) {
+        heartCrownTimer--;
+    }
+
+    if (gestures.middleFinger) {
+        cheekyCrownTimer = 75;
+    } else if (cheekyCrownTimer > 0) {
+        cheekyCrownTimer--;
+    }
+
+    // E. Draw 3D Halo Crowns (gated on active gesture and UI toggle)
+    const showHeartCrown = checkCrown.checked && (heartCrownTimer > 0);
+    const showCheekyCrown = checkCheeky.checked && (cheekyCrownTimer > 0);
 
     if ((showHeartCrown || showCheekyCrown) && faceTracks.length > 0) {
         const deltaSec = (now - lastCrownTime) / 1000;
@@ -707,7 +719,7 @@ function renderScene(handResults, gestures, now) {
             draw3DCrown(ctx, fx, fy, fw, fh, crownAngle, crownEmojis);
         }
 
-        // Ambient particles (lightweight spawn rate with particle cap)
+        // Ambient particles only when crown is actively triggered
         if (Math.random() < 0.08 && activeParticles.length < 24) {
             const rx = Math.random() * w;
             const ry = Math.random() * h * 0.7;

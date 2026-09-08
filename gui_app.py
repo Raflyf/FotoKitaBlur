@@ -215,6 +215,8 @@ class FotoKitaBlurApp:
         self.particles = []
         self.crown_angle = 0.0
         self.last_crown_time = time.perf_counter()
+        self.heart_crown_timer = 0
+        self.cheeky_crown_timer = 0
 
         # Load Scuba Cat GIF frames
         self.cat_frames = []
@@ -596,11 +598,13 @@ class FotoKitaBlurApp:
                 lms = hand.landmark
                 if PeaceBlurDetector.is_middle_finger(lms):
                     middle_finger_detected = True
+                    self.cheeky_crown_timer = 45
                     gx = lms[12].x * w
                     gy = lms[12].y * h
                     cheeky_spawns.append((gx, gy))
 
                 if PeaceBlurDetector.is_finger_heart(lms):
+                    self.heart_crown_timer = 45
                     gx = (lms[8].x + lms[4].x) / 2.0 * w
                     gy = (lms[8].y + lms[4].y) / 2.0 * h
                     finger_heart_spawns.append((gx, gy))
@@ -618,6 +622,7 @@ class FotoKitaBlurApp:
                     hands_landmarks[0].landmark, hands_landmarks[1].landmark
                 )
                 if two_res:
+                    self.heart_crown_timer = 45
                     two_hand_heart_spawn = (two_res["x"] * w, two_res["y"] * h)
 
             # Check Scuba Cat (Nose Hold + Waving)
@@ -629,7 +634,8 @@ class FotoKitaBlurApp:
                     hl = hand.landmark
                     dist_face = math.hypot(hl[0].x - fcx, hl[0].y - fcy)
                     dist_tip = math.hypot(hl[8].x - fcx, hl[8].y - fcy)
-                    if dist_face < fw * 0.95 or dist_tip < fw * 0.75:
+                    dist_thumb = math.hypot(hl[4].x - fcx, hl[4].y - fcy)
+                    if dist_face < fw * 1.15 or dist_tip < fw * 0.95 or dist_thumb < fw * 0.95:
                         nose_hand_idx = i
                         break
 
@@ -638,21 +644,21 @@ class FotoKitaBlurApp:
                     wave_wrist_x = wave_hand[0].x
                     if self.last_wrist_x is not None:
                         dx = wave_wrist_x - self.last_wrist_x
-                        if abs(dx) > 0.008:
+                        if abs(dx) > 0.006:
                             d = 1 if dx > 0 else -1
                             if self.last_dir != 0 and d != self.last_dir:
-                                self.waving_energy = min(100.0, self.waving_energy + 26.0)
+                                self.waving_energy = min(100.0, self.waving_energy + 28.0)
                             self.last_dir = d
                         else:
-                            self.waving_energy = max(0.0, self.waving_energy - 1.5)
+                            self.waving_energy = max(0.0, self.waving_energy - 1.2)
                     self.last_wrist_x = wave_wrist_x
 
-                    if self.waving_energy >= 40.0:
-                        self.scubacat_hold_frames = 15
+                    if self.waving_energy >= 28.0:
+                        self.scubacat_hold_frames = 20
                 else:
-                    self.waving_energy = max(0.0, self.waving_energy - 3.0)
+                    self.waving_energy = max(0.0, self.waving_energy - 2.5)
             else:
-                self.waving_energy = max(0.0, self.waving_energy - 3.0)
+                self.waving_energy = max(0.0, self.waving_energy - 2.5)
         else:
             for lbl in self.diag_badges.values():
                 lbl.config(text="FOLDED", fg="#5f5f6e")
@@ -709,8 +715,13 @@ class FotoKitaBlurApp:
                 draw.text((int(p.x), int(p.y)), p.emoji, font=self.emoji_font, embedded_color=True)
 
         # 6. Draw 3D Halo Crown
-        show_crown = self.var_crown.get()
-        show_cheeky = self.var_cheeky.get()
+        if self.heart_crown_timer > 0:
+            self.heart_crown_timer -= 1
+        if self.cheeky_crown_timer > 0:
+            self.cheeky_crown_timer -= 1
+
+        show_crown = self.var_crown.get() and (self.heart_crown_timer > 0)
+        show_cheeky = self.var_cheeky.get() and (self.cheeky_crown_timer > 0)
 
         if (show_crown or show_cheeky) and self.tracked_face is not None:
             delta = now - self.last_crown_time
@@ -719,10 +730,10 @@ class FotoKitaBlurApp:
 
             emojis = ['🖕', '😜', '🤪', '🖕', '😝', '👅'] if show_cheeky else ['💖', '❤️', '💕', '💗', '💓', '💝']
             fcx, fcy, fw, fh = self.tracked_face
-            rx = fw * w * 0.62
-            ry = fh * h * 0.15
+            rx = fw * w * 0.58
+            ry = fh * h * 0.12
             center_x = fcx * w
-            center_y = (fcy - fh * 0.88) * h
+            center_y = (fcy - fh * 0.72) * h
 
             # Depth perspective sorting
             halo_items = []
@@ -738,7 +749,7 @@ class FotoKitaBlurApp:
             for _, hx, hy, em in halo_items:
                 draw.text((int(hx - 18), int(hy - 18)), em, font=self.emoji_font, embedded_color=True)
 
-            # Ambient particles
+            # Ambient particles only when actively triggered
             if random.random() < 0.25:
                 self.particles.append(Particle(random.uniform(0, w), random.uniform(0, h * 0.7), emojis))
         else:

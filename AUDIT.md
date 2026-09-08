@@ -394,3 +394,34 @@ from a light touch / non-gesture.
    - Updated ES module import query strings in `static/main.js` to `./gestures.js?v=4` and `./particles.js?v=4`.
 3. **Clean Process Re-initialization:**
    - Terminated legacy background process and restarted Flask cleanly via the target virtual environment Python binary.
+
+## FIX-44 — Face Normalization Alignment, Crown Gesture Latching, and Scuba Cat Trigger Calibration
+
+**Date:** 2026-09-08
+**Files:** `static/main.js`, `static/particles.js`, `templates/index.html`, `gui_app.py`
+
+### Root Causes
+1. **Broken Crown Position & Size (Displaced to Top-Right Corner):**
+   - MediaPipe `FaceDetector` was evaluating against an intermediate offscreen canvas (`visionInputCanvas`, 480x270), returning bounding box pixel coordinates in `[0..480, 0..270]`.
+   - `updateFaceTracks` divided these coordinates by `video.videoWidth` (e.g. 1280) and `video.videoHeight` (e.g. 720), squishing face coordinates down by a factor of 2.66x towards `(0.18, 0.18)`.
+   - On the horizontally mirrored render canvas, `fx = (1 - 0.18) * w = 0.82 * w`, drawing the halo crown in the far top-right ceiling corner with microscopic radiuses.
+2. **False Love Particles on Camera Start ("Love Korea Sudah Tertrigger"):**
+   - In `main.js`, `checkCrown.checked` was enabled by default and immediately drew rotating heart crowns and spawned ambient heart particles whenever any face was detected, without requiring the finger heart or two-hand heart gestures.
+   - The user observed floating heart emojis without having made any gesture.
+3. **Scuba Cat Waving Gesture Failing to Trigger:**
+   - Because `faceTracks` held corrupted coordinates near `(0.18, 0.18)` and `face.w` near `0.07`, distance calculations between the hand and face (`distCenter < face.w * 0.95`) never resolved to true when the user touched their actual face at `(0.5, 0.5)`.
+
+### Solutions Implemented
+1. **Direct Native Video Inference:**
+   - Removed intermediate `visionInputCanvas` blit. MediaPipe `HandLandmarker` and `FaceDetector` now evaluate the `<video>` element directly.
+   - Normalized bounding box coordinates against `video.videoWidth` and `video.videoHeight`, restoring 100% geometric accuracy.
+2. **Crown Gesture Latching (Temporal Latch):**
+   - Gated heart crown on active detection of `isFingerHeart` or `isTwoHandHeart` with a 75-frame (~1.25s) temporal latch (`heartCrownTimer`).
+   - Gated cheeky crown on active detection of `isMiddleFinger` with a 75-frame (~1.25s) temporal latch (`cheekyCrownTimer`).
+   - Screen remains completely free of random heart/cheeky emojis when hands are resting.
+3. **Halo Floating Geometry Calibration (`static/particles.js`, `gui_app.py`):**
+   - Calibrated crown center height to `cy = faceCenterY - faceHeight * 0.72` with natural orbital radiuses `rx = faceWidth * 0.58` and `ry = faceHeight * 0.12`, positioning the halo naturally above the cranium and hair.
+4. **Scuba Cat Hand-Face Distance & Wave Sensitivity:**
+   - Expanded nose/face touch acceptance radius to `distCenter < face.w * 1.15 || distTips < face.w * 0.95 || distThumb < face.w * 0.95`.
+   - Lowered wave movement threshold to `Math.abs(dx) > 0.006` and threshold to `wavingEnergy >= 28`, guaranteeing immediate Scuba Cat trigger on 1-2 wave cycles.
+   - Applied identical logic to Python desktop app `gui_app.py`.
